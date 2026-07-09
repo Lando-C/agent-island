@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ling
+// SPDX-License-Identifier: MIT
+
 import AppKit
 import Foundation
 

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Ling
+// SPDX-License-Identifier: MIT
+
 import Foundation
 
 struct TerminalJumpTarget: Equatable {

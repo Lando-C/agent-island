@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Ling
+# SPDX-License-Identifier: MIT
+
 """Adversarial checks for Agent Island's session reducer semantics.
 
 This is a lightweight spec mirror for the Swift reducer. It catches the failure

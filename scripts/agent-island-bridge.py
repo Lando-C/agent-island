@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Ling
+# SPDX-License-Identifier: MIT
+
 """Agent Island hook bridge.
 
 Reads Claude Code / Codex hook JSON from stdin, normalizes the event into a

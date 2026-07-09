@@ -325,12 +325,16 @@ def should_auto_allow(source: str, event: str, payload: dict[str, Any]) -> bool:
     return bool(settings.get("allow_read_only", True)) and risk["risk"] == "safe_read"
 
 
-def session_id(payload: dict[str, Any]) -> str:
+def raw_session_id(payload: dict[str, Any]) -> str:
     for key in ("session_id", "sessionId", "conversationId", "thread_id", "threadId"):
         value = payload.get(key)
         if value:
             return str(value)
     return ""
+
+
+def session_id(payload: dict[str, Any]) -> str:
+    return first_nonempty(primary_session_id(payload), parent_session_id(payload), raw_session_id(payload))
 
 
 def cwd(payload: dict[str, Any]) -> str:
@@ -349,6 +353,37 @@ def first_nonempty(*values: Any) -> str:
         if text:
             return text
     return ""
+
+
+def parent_session_id(payload: dict[str, Any]) -> str:
+    return first_nonempty(
+        payload.get("parent_session_id"),
+        payload.get("parentSessionId"),
+        payload.get("parent_conversation_id"),
+        payload.get("parentConversationId"),
+        payload.get("root_session_id"),
+        payload.get("rootSessionId"),
+    )
+
+
+def primary_session_id(payload: dict[str, Any]) -> str:
+    return first_nonempty(
+        payload.get("primary_session_id"),
+        payload.get("primarySessionId"),
+        payload.get("primary_conversation_id"),
+        payload.get("primaryConversationId"),
+        payload.get("observed_primary_session_id"),
+        payload.get("observedPrimarySessionId"),
+    )
+
+
+def transcript_path(payload: dict[str, Any]) -> str:
+    return first_nonempty(
+        payload.get("transcript_path"),
+        payload.get("transcriptPath"),
+        payload.get("conversation_path"),
+        payload.get("conversationPath"),
+    )
 
 
 def normalized_tty(value: str | None) -> str:
@@ -707,13 +742,17 @@ def write_event(source: str, phase: str, title: str, message: str, payload: dict
     pid = os.getppid()
     terminal = terminal_metadata(payload, pid)
     risk = classify_tool_risk(payload)
+    raw_sid = raw_session_id(payload)
+    parent_sid = parent_session_id(payload)
+    primary_sid = primary_session_id(payload)
+    transcript = transcript_path(payload)
     frame = {
         "agent": source,
         "surface": infer_surface(source, pid),
         "status": phase,
         "title": title,
         "message": message,
-        "session": session_id(payload),
+        "session": first_nonempty(primary_sid, parent_sid, raw_sid),
         "tool": tool_name(payload),
         "event": str(payload.get("hook_event_name") or payload.get("event") or ""),
         "pid": pid,
@@ -722,6 +761,14 @@ def write_event(source: str, phase: str, title: str, message: str, payload: dict
         "tool_risk_reason": risk["reason"],
         "auto_approval_eligible": risk["auto_approval_eligible"],
     }
+    if raw_sid:
+        frame["raw_session"] = raw_sid
+    if primary_sid:
+        frame["primary_session"] = primary_sid
+    if parent_sid:
+        frame["parent_session"] = parent_sid
+    if transcript:
+        frame["transcript_path"] = transcript
     req_id = request_id(payload)
     input_summary = tool_input_summary(payload)
     if req_id:

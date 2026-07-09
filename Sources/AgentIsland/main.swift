@@ -215,6 +215,10 @@ struct AgentEvent: Decodable {
     var terminalTmuxPane: String?
     var terminalTmuxSocket: String?
     var terminalTmuxClient: String?
+    var rawSession: String?
+    var primarySession: String?
+    var parentSession: String?
+    var transcriptPath: String?
     var requestID: String?
     var toolInputSummary: String?
     var toolRisk: String?
@@ -233,6 +237,10 @@ struct AgentEvent: Decodable {
         case terminalTmuxPane = "terminal_tmux_pane"
         case terminalTmuxSocket = "terminal_tmux_socket"
         case terminalTmuxClient = "terminal_tmux_client"
+        case rawSession = "raw_session"
+        case primarySession = "primary_session"
+        case parentSession = "parent_session"
+        case transcriptPath = "transcript_path"
         case requestID = "request_id"
         case toolInputSummary = "tool_input_summary"
         case toolRisk = "tool_risk"
@@ -418,7 +426,12 @@ enum AgentText {
         if text.contains("<task-notification") { return true }
         if text.contains("<task-id>") { return true }
         if text.contains("</task-notification>") { return true }
+        if text.contains("<observed_from_primary_session") { return true }
+        if text.contains("</observed_from_primary_session>") { return true }
         if text.contains("<system-reminder") { return true }
+        if text.contains("hello memory agent") { return true }
+        if text.contains("you are a claude-mem") { return true }
+        if text.contains("memory processing continued") { return true }
         if text.contains("this session is being continued from a previous conversation") {
             return true
         }
@@ -1997,7 +2010,8 @@ final class AgentMonitor: ObservableObject {
                   !session.isEmpty else {
                 continue
             }
-            result[family, default: []].insert(session)
+            guard !isAuxiliaryAgentEvent(event, family: family) else { continue }
+            result[family, default: []].insert(logicalSessionID(for: event, fallback: session))
         }
         return result
     }
@@ -2110,6 +2124,72 @@ final class AgentMonitor: ObservableObject {
         "\(family.rawValue)::\(session)"
     }
 
+    private func logicalSessionID(for event: AgentEvent, fallback: String) -> String {
+        for candidate in [event.primarySession, event.parentSession, observedSessionMarker(in: event)] {
+            if let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        return fallback
+    }
+
+    private func observedSessionMarker(in event: AgentEvent) -> String? {
+        let text = [event.title, event.message, event.toolInputSummary]
+            .compactMap { $0 }
+            .joined(separator: " ")
+        guard let range = text.range(of: #"<observed_from_primary_session[^>]*session=["']([^"']+)["']"#, options: [.regularExpression]) else {
+            return nil
+        }
+        let match = String(text[range])
+        guard let valueRange = match.range(of: #"session=["']([^"']+)["']"#, options: [.regularExpression]) else {
+            return nil
+        }
+        let raw = String(match[valueRange])
+            .replacingOccurrences(of: #"session=""#, with: "")
+            .replacingOccurrences(of: #"session='"#, with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        return raw.isEmpty ? nil : raw
+    }
+
+    private func isAuxiliaryAgentEvent(_ event: AgentEvent, family: AgentFamily) -> Bool {
+        guard family == .claude else { return false }
+        let text = [
+            event.cwd,
+            event.transcriptPath,
+            event.title,
+            event.message,
+            event.toolInputSummary,
+            event.session,
+            event.rawSession
+        ]
+            .compactMap { $0 }
+            .joined(separator: " ")
+            .lowercased()
+
+        guard !text.isEmpty else { return false }
+        if text.contains("/.claude-mem/") { return true }
+        if text.contains("--claude-mem") { return true }
+        if text.contains("claude-mem") { return true }
+        if text.contains("observer-sessions") { return true }
+        if text.contains("<observed_from_primary_session") { return true }
+        if text.contains("hello memory agent") { return true }
+        return false
+    }
+
+    private func shouldSuppressAuxiliaryEvent(
+        _ event: AgentEvent,
+        family: AgentFamily,
+        phase: AgentPhase
+    ) -> Bool {
+        guard isAuxiliaryAgentEvent(event, family: family) else { return false }
+        switch phase {
+        case .needsAttention, .error:
+            return false
+        case .working, .thinking, .queued, .done, .online, .idle, .offline:
+            return true
+        }
+    }
+
     private func eventRollups(rows: [ProcessRow]) -> [String: AgentEventRollup] {
         let url = home.appendingPathComponent(".agent-island/events.jsonl")
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
@@ -2132,6 +2212,7 @@ final class AgentMonitor: ObservableObject {
                   let phase = normalizeEventPhase(event) else {
                 continue
             }
+            guard !shouldSuppressAuxiliaryEvent(event, family: family, phase: phase) else { continue }
             let rawSurface = normalizeSurface(event.surface ?? event.channel) ?? .cli
             let surface = resolvedSurface(
                 for: event,
@@ -2145,11 +2226,12 @@ final class AgentMonitor: ObservableObject {
             let session = event.session?.isEmpty == false
                 ? event.session!
                 : event.pid.map { "pid:\($0)" } ?? "global:\(family.rawValue)-\(surface.rawValue)"
+            let logicalSession = logicalSessionID(for: event, fallback: session)
             let hookEvent = normalizeHookEventName(event)
             let dedupeKey = [
                 family.rawValue,
                 surface.rawValue,
-                session,
+                logicalSession,
                 hookEvent,
                 event.tool ?? "",
                 event.pid.map(String.init) ?? "",
@@ -2161,7 +2243,7 @@ final class AgentMonitor: ObservableObject {
                 ResolvedAgentEvent(
                     family: family,
                     surface: surface,
-                    session: session,
+                    session: logicalSession,
                     event: event,
                     hookEvent: hookEvent,
                     normalizedPhase: phase,
@@ -2220,10 +2302,13 @@ final class AgentMonitor: ObservableObject {
     private func conversationInfo(
         for event: AgentEvent,
         family: AgentFamily,
+        session: String? = nil,
         conversations: [String: ConversationInfo]
     ) -> ConversationInfo? {
-        guard let session = event.session, !session.isEmpty else { return nil }
-        return conversations[conversationKey(family, session)]
+        let rawSession = session ?? event.session
+        guard let rawSession, !rawSession.isEmpty else { return nil }
+        let logicalSession = logicalSessionID(for: event, fallback: rawSession)
+        return conversations[conversationKey(family, logicalSession)]
     }
 
     private func eventActionText(
@@ -2343,7 +2428,7 @@ final class AgentMonitor: ObservableObject {
             guard now - ts <= eventMaxAge(for: phase) else { return nil }
 
             let hookEvent = normalizeHookEventName(event)
-            let conversation = conversationInfo(for: event, family: family, conversations: conversations)
+            let conversation = conversationInfo(for: event, family: family, session: session, conversations: conversations)
             var snapshot = AgentSnapshot.empty(family, surface)
             snapshot.sessionID = session
             snapshot.phase = phase
@@ -2485,7 +2570,7 @@ final class AgentMonitor: ObservableObject {
         next.pendingCount = max(next.pendingCount, rollup.queuedCount)
         next.completedCount = max(next.completedCount, rollup.doneCount)
         let hookEvent = normalizeHookEventName(event)
-        let conversation = conversationInfo(for: event, family: snapshot.family, conversations: conversations)
+        let conversation = conversationInfo(for: event, family: snapshot.family, session: snapshot.sessionID, conversations: conversations)
 
         if hookEvent == "posttoolusefailure", phase == .needsAttention {
             next.title = "\(snapshot.family.displayName) 需要确认"

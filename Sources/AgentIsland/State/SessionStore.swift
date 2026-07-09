@@ -72,7 +72,7 @@ struct AgentSessionStore {
 
         mutating func apply(_ resolved: ResolvedAgentEvent) {
             family = resolved.family
-            surface = resolved.surface
+            surface = preferredSurface(current: surface, incoming: resolved.surface)
             latestEvent = resolved.event
             latestHookEvent = resolved.hookEvent
             latestTs = resolved.ts
@@ -168,6 +168,13 @@ struct AgentSessionStore {
         private func normalizedTool(_ rawTool: String?) -> String {
             let value = rawTool?.trimmingCharacters(in: .whitespacesAndNewlines)
             return value?.isEmpty == false ? value! : "__tool__"
+        }
+
+        private func preferredSurface(current: AgentSurface, incoming: AgentSurface) -> AgentSurface {
+            if current == incoming { return current }
+            if current == .app || incoming == .app { return .app }
+            if current == .runtime || incoming == .runtime { return .runtime }
+            return incoming
         }
 
         func rollup(now: Double) -> AgentEventRollup? {

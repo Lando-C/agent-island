@@ -30,6 +30,8 @@ The goal is not to show that an app is online. The goal is to answer:
 - Auto spotlight for working, waiting, done, and error transitions, with short
   duration and manual dismissal.
 - `Escape` closes the expanded panel, and `Option-N` toggles the island.
+- When the island is focused, `Command-Y` allows the first inline permission
+  request and `Command-N` denies it.
 - Screen-safe positioning using visible screen bounds, with user-adjustable
   idle/working widths.
 - Settings window with Appearance, System, Safety, Diagnostics, and Roadmap
@@ -42,8 +44,9 @@ The goal is not to show that an app is online. The goal is to answer:
 - Pending request store and local hook socket for human handoff.
 - In-island allow/deny for Claude Code `PermissionRequest` hooks.
 - `request_user_input` / elicitation events are captured as structured pending
-  requests; write-back remains conservative until each engine response schema is
-  verified.
+  requests. Questions and choices are visible in the island and can be copied
+  back to the source session; direct write-back remains conservative until each
+  engine response schema is verified.
 - Optional auto approval for safe read-only Claude PermissionRequest tools.
   It is off by default. Dangerous operations are never auto-approved.
 

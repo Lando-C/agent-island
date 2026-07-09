@@ -12,11 +12,17 @@ Done:
 - In-app allow/deny for Claude `PermissionRequest`.
 - `request_user_input` / elicitation events captured as structured pending
   requests.
+- Pending request cards for unmatched socket requests, so handoff events do not
+  disappear when no session row can be matched.
+- Focused-island `Command-Y` / `Command-N` shortcuts for the first inline
+  approval request.
 
 Remaining:
 
 - Codex approval/question response schema validation before write-back.
-- Inline answer UI for `request_user_input` once response schemas are verified.
+- Direct inline answer write-back for `request_user_input` once response schemas
+  are verified. Current question cards show/copy options but do not claim to
+  submit them.
 - Old idle/waiting session pruning.
 - Zombie detection for pid, process tree, terminal, and tmux pane liveness.
 

@@ -47,6 +47,14 @@ struct PendingRequest: Identifiable, Equatable {
     var isPending: Bool {
         status == .pending
     }
+
+    var canApproveInline: Bool {
+        canRespondInline && kind == .permission
+    }
+
+    var canAnswerInline: Bool {
+        canRespondInline && kind == .input
+    }
 }
 
 struct HookSocketRequest: Decodable {
@@ -142,6 +150,10 @@ final class PendingRequestStore: ObservableObject {
         requests.filter(\.isPending).count
     }
 
+    var firstPendingPermission: PendingRequest? {
+        requests.first { $0.isPending && $0.canApproveInline }
+    }
+
     func upsert(socketRequest: HookSocketRequest) -> PendingRequest {
         let now = Date()
         let request = PendingRequest(
@@ -215,6 +227,20 @@ final class PendingRequestStore: ObservableObject {
 
     func markResponded(id: String, status: PendingRequestStatus, message: String) {
         update(id: id, status: status, message: message)
+    }
+
+    @discardableResult
+    func allowFirstPendingPermission() -> Bool {
+        guard let request = firstPendingPermission else { return false }
+        allow(request)
+        return true
+    }
+
+    @discardableResult
+    func denyFirstPendingPermission() -> Bool {
+        guard let request = firstPendingPermission else { return false }
+        deny(request)
+        return true
     }
 
     func prune(now: Date) {

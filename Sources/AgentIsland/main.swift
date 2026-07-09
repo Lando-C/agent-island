@@ -391,6 +391,51 @@ private enum AgentSnapshotSummary {
     }
 }
 
+private enum PendingRequestSummary {
+    static func text(for request: PendingRequest) -> String {
+        var lines: [String] = []
+        lines.append("Agent Island Pending Request")
+        lines.append("Title: \(request.title)")
+        lines.append("Agent: \(request.family.displayName)")
+        lines.append("Surface: \(request.surface.displayName)")
+        lines.append("Kind: \(request.kind.rawValue)")
+        lines.append("Status: \(request.status.rawValue)")
+        if !request.detail.isEmpty {
+            lines.append("Detail: \(request.detail)")
+        }
+        if let sessionID = request.sessionID, !sessionID.isEmpty {
+            lines.append("Session: \(sessionID)")
+        }
+        if let requestID = request.requestID, !requestID.isEmpty {
+            lines.append("Request: \(requestID)")
+        }
+        if let tool = request.tool, !tool.isEmpty {
+            lines.append("Tool: \(tool)")
+        }
+        if let toolInputSummary = request.toolInputSummary, !toolInputSummary.isEmpty {
+            lines.append("Tool Input: \(toolInputSummary)")
+        }
+        if let toolRisk = request.toolRisk, !toolRisk.isEmpty {
+            var risk = toolRisk
+            if let reason = request.toolRiskReason, !reason.isEmpty {
+                risk += " (\(reason))"
+            }
+            lines.append("Risk: \(risk)")
+        }
+        if let question = request.question, !question.isEmpty {
+            lines.append("Question: \(question)")
+        }
+        if !request.options.isEmpty {
+            lines.append("Options:")
+            for option in request.options {
+                lines.append("- \(option)")
+            }
+        }
+        lines.append("Created: \(ISO8601DateFormatter().string(from: request.createdAt))")
+        return lines.joined(separator: "\n")
+    }
+}
+
 struct ProcessRow {
     var pid: Int
     var ppid: Int?
@@ -2974,6 +3019,32 @@ struct IslandView: View {
         expanded ? monitor.snapshots : Array(activeSnapshots.prefix(3))
     }
 
+    private var pendingOnlyRequests: [PendingRequest] {
+        let attachedIDs = Set(displaySnapshots.compactMap { matchingPendingRequestID(for: $0) })
+        return Array(pendingRequests.requests.filter { request in
+            request.isPending && !attachedIDs.contains(request.id)
+        }.prefix(4))
+    }
+
+    private var displayItemCount: Int {
+        displaySnapshots.count + pendingOnlyRequests.count
+    }
+
+    private func matchingPendingRequestID(for snapshot: AgentSnapshot) -> String? {
+        if let requestID = snapshot.requestID, !requestID.isEmpty {
+            let key = "\(snapshot.family.rawValue)::\(requestID)"
+            if pendingRequests.requests.contains(where: { $0.id == key }) {
+                return key
+            }
+        }
+        guard let sessionID = snapshot.sessionID else { return nil }
+        return pendingRequests.requests.first {
+            $0.family == snapshot.family
+                && $0.sessionID == sessionID
+                && $0.status == .pending
+        }?.id
+    }
+
     private var screenVisibleSize: CGSize {
         NSScreen.main?.visibleFrame.size ?? CGSize(width: 900, height: 700)
     }
@@ -2993,9 +3064,9 @@ struct IslandView: View {
     }
 
     private var rowsViewportHeight: CGFloat {
-        let visibleCount = min(max(displaySnapshots.count, 1), 4)
-        let base = CGFloat(visibleCount) * 34 + CGFloat(max(visibleCount - 1, 0)) * 8
-        let preferred = displaySnapshots.count > 4 ? min(base + 16, 184) : base
+        let visibleCount = min(max(displayItemCount, 1), 4)
+        let base = CGFloat(visibleCount) * 42 + CGFloat(max(visibleCount - 1, 0)) * 8
+        let preferred = displayItemCount > 4 ? min(base + 16, 184) : base
         return min(preferred, rowsMaxHeight)
     }
 
@@ -3197,6 +3268,19 @@ struct IslandView: View {
                     )
                     .help("点击跳转到 \(snapshot.title)")
                 }
+
+                ForEach(pendingOnlyRequests) { request in
+                    PendingRequestCard(
+                        request: request,
+                        copied: copiedSnapshotID == request.id,
+                        onAllow: { pendingRequests.allow(request) },
+                        onDeny: { pendingRequests.deny(request) },
+                        onCopy: { copyPendingRequest(request) },
+                        onCopyAnswer: { answer in
+                            copyPendingRequest(request, answer: answer)
+                        }
+                    )
+                }
             }
             .padding(.vertical, 1)
         }
@@ -3216,6 +3300,27 @@ struct IslandView: View {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
             if copiedSnapshotID == snapshot.id {
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    copiedSnapshotID = nil
+                }
+            }
+        }
+    }
+
+    private func copyPendingRequest(_ request: PendingRequest, answer: String? = nil) {
+        let text: String
+        if let answer {
+            text = answer
+        } else {
+            text = PendingRequestSummary.text(for: request)
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        withAnimation(.easeInOut(duration: 0.12)) {
+            copiedSnapshotID = request.id
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            if copiedSnapshotID == request.id {
                 withAnimation(.easeInOut(duration: 0.12)) {
                     copiedSnapshotID = nil
                 }
@@ -3358,7 +3463,7 @@ struct AgentRow: View {
 
     private var quickActions: some View {
         HStack(spacing: 4) {
-            if let pendingRequest, pendingRequest.canRespondInline, pendingRequest.isPending {
+            if let pendingRequest, pendingRequest.canApproveInline, pendingRequest.isPending {
                 Button {
                     onAllow(pendingRequest)
                 } label: {
@@ -3444,6 +3549,9 @@ struct AgentRow: View {
     }
 
     private var detailText: String {
+        if let pendingRequest, pendingRequest.isPending {
+            return pendingRequest.detail
+        }
         guard let lastUpdated = snapshot.lastUpdated else { return snapshot.detail }
         let age = max(0, Date().timeIntervalSince(lastUpdated))
         let label: String
@@ -3474,6 +3582,141 @@ struct AgentRow: View {
         }
         if snapshot.completedCount > 0 {
             CountBadge(value: snapshot.completedCount, color: .blue)
+        }
+    }
+}
+
+struct PendingRequestCard: View {
+    var request: PendingRequest
+    var copied: Bool = false
+    var onAllow: () -> Void = {}
+    var onDeny: () -> Void = {}
+    var onCopy: () -> Void = {}
+    var onCopyAnswer: (String) -> Void = { _ in }
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(tint.opacity(0.18))
+                    .frame(width: 31, height: 31)
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(tint)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(request.title)
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    if let toolRisk = request.toolRisk, !toolRisk.isEmpty {
+                        Text(toolRiskLabel(toolRisk))
+                            .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                            .foregroundStyle(.black.opacity(0.86))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1)
+                            .background(riskColor(toolRisk), in: Capsule())
+                    }
+                }
+
+                Text(request.detail)
+                    .font(.system(size: 10.5, weight: .medium, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.64))
+                    .lineLimit(1)
+
+                if request.kind == .input, !request.options.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(Array(request.options.prefix(3)), id: \.self) { option in
+                            Button {
+                                onCopyAnswer(option)
+                            } label: {
+                                Text(option)
+                                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+                                    .foregroundStyle(.white.opacity(0.82))
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 3)
+                                    .background(Color.white.opacity(0.08), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help("复制该选项，回到原会话提交")
+                        }
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 4) {
+                if request.canApproveInline {
+                    Button(action: onAllow) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.green)
+                            .frame(width: 22, height: 22)
+                            .background(Color.green.opacity(0.14), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("允许本次请求")
+
+                    Button(action: onDeny) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.red)
+                            .frame(width: 22, height: 22)
+                            .background(Color.red.opacity(0.14), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("拒绝本次请求")
+                }
+
+                Button(action: onCopy) {
+                    Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(copied ? .green : Color.white.opacity(0.72))
+                        .frame(width: 22, height: 22)
+                        .background(Color.white.opacity(copied ? 0.13 : 0.08), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help(copied ? "已复制" : "复制请求摘要")
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: request.options.isEmpty ? 42 : 58)
+        .padding(.horizontal, 4)
+        .background(Color.white.opacity(hovering ? 0.07 : 0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(tint.opacity(0.14), lineWidth: 1)
+        }
+        .onHover { hovering = $0 }
+    }
+
+    private var tint: Color {
+        request.kind == .permission ? .orange : .cyan
+    }
+
+    private var icon: String {
+        request.kind == .permission ? "hand.raised.fill" : "text.bubble.fill"
+    }
+
+    private func toolRiskLabel(_ risk: String) -> String {
+        switch risk {
+        case "safe_read": return "只读"
+        case "dangerous": return "危险"
+        case "write": return "写入"
+        default: return risk
+        }
+    }
+
+    private func riskColor(_ risk: String) -> Color {
+        switch risk {
+        case "safe_read": return .green
+        case "dangerous": return .red
+        case "write": return .orange
+        default: return .yellow
         }
     }
 }
@@ -3521,7 +3764,7 @@ struct SpotlightSummary: View {
 
             if snapshot.hasQuickActions {
                 HStack(spacing: 5) {
-                    if let pendingRequest, pendingRequest.canRespondInline, pendingRequest.isPending {
+                    if let pendingRequest, pendingRequest.canApproveInline, pendingRequest.isPending {
                         Button {
                             onAllow(pendingRequest)
                         } label: {
@@ -3891,6 +4134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Reinstall Hooks", action: #selector(reinstallHooks), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Copy Diagnostics Report", action: #selector(copyDiagnosticsReport), keyEquivalent: "d"))
         menu.addItem(.separator())
+        let allowItem = NSMenuItem(title: "Allow First Pending Request", action: #selector(allowFirstPendingRequest), keyEquivalent: "y")
+        allowItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(allowItem)
+        let denyItem = NSMenuItem(title: "Deny First Pending Request", action: #selector(denyFirstPendingRequest), keyEquivalent: "n")
+        denyItem.keyEquivalentModifierMask = [.command]
+        menu.addItem(denyItem)
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Open Accessibility Settings", action: #selector(openAccessibilitySettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Open Notification Settings", action: #selector(openNotificationSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Open Login Items Settings", action: #selector(openLoginItemsSettings), keyEquivalent: ""))
@@ -3902,6 +4152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupKeyMonitors() {
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.handleApprovalShortcut(event) == true {
+                return nil
+            }
             if self?.isOptionN(event) == true {
                 self?.toggleIsland()
                 return nil
@@ -3928,6 +4181,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return flags.contains(.option)
             && !flags.contains(.command)
             && !flags.contains(.control)
+    }
+
+    private func handleApprovalShortcut(_ event: NSEvent) -> Bool {
+        guard isExpanded else { return false }
+        if isCommandY(event) {
+            return approveFirstPendingRequest()
+        }
+        if isCommandN(event) {
+            return rejectFirstPendingRequest()
+        }
+        return false
+    }
+
+    private func isCommandY(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 16 else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags.contains(.command)
+            && !flags.contains(.option)
+            && !flags.contains(.control)
+    }
+
+    private func isCommandN(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 45 else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags.contains(.command)
+            && !flags.contains(.option)
+            && !flags.contains(.control)
+    }
+
+    @objc private func allowFirstPendingRequest() {
+        _ = approveFirstPendingRequest()
+    }
+
+    @objc private func denyFirstPendingRequest() {
+        _ = rejectFirstPendingRequest()
+    }
+
+    @discardableResult
+    private func approveFirstPendingRequest() -> Bool {
+        let handled = pendingRequests.allowFirstPendingPermission()
+        if handled {
+            islandLog("pending request approved from shortcut")
+        }
+        return handled
+    }
+
+    @discardableResult
+    private func rejectFirstPendingRequest() -> Bool {
+        let handled = pendingRequests.denyFirstPendingPermission()
+        if handled {
+            islandLog("pending request denied from shortcut")
+        }
+        return handled
     }
 
     private func positionPanel(animate: Bool = false) {

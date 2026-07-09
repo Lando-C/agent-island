@@ -22,6 +22,8 @@ Agent Island is a native Swift macOS app plus small local scripts.
   needs-attention states.
 - Approval and question states are first-class human handoff states, not generic
   errors.
+- Pending requests that cannot be attached to a current session snapshot are
+  still rendered as standalone island cards.
 
 ## Safety Philosophy
 
@@ -29,4 +31,5 @@ Auto approval is opt-in and limited. Manual approval is explicit: the hook bridg
 blocks only for a pending request, the island shows the tool/risk summary, and
 the local socket returns allow or deny only after the user acts. Unsupported
 question/approval schemas are captured but fall back to the native agent flow
-instead of guessing a response.
+instead of guessing a response. Question cards may expose choices for copying,
+but they are not marked as answered until a verified write-back path exists.

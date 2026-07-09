@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+import argparse
+import glob
+import json
+import os
+import socket
+import sys
+import time
+
+
+def rpc(sock, request_id, method, params=None):
+    message = {"id": request_id, "method": method, "params": params or {}}
+    sock.sendall((json.dumps(message, separators=(",", ":")) + "\n").encode("utf-8"))
+    buffer = b""
+    deadline = time.monotonic() + 4
+    while time.monotonic() < deadline:
+        chunk = sock.recv(1024 * 1024)
+        if not chunk:
+            raise RuntimeError(f"connection closed while waiting for {method}")
+        buffer += chunk
+        while b"\n" in buffer:
+            line, buffer = buffer.split(b"\n", 1)
+            if not line.strip():
+                continue
+            payload = json.loads(line.decode("utf-8"))
+            if payload.get("id") != request_id:
+                continue
+            if "error" in payload:
+                raise RuntimeError(payload["error"].get("message") or str(payload["error"]))
+            return payload.get("result") or {}
+    raise TimeoutError(f"timeout waiting for {method}")
+
+
+def discover_sockets():
+    tmp = os.environ.get("TMPDIR", "/tmp").rstrip("/")
+    candidates = []
+    env_socket = os.environ.get("AGENT_ISLAND_CODEX_BROKER_SOCKET")
+    if env_socket:
+        candidates.append(env_socket)
+    candidates += glob.glob(f"{tmp}/cxc-*/broker.sock")
+    if tmp != "/tmp":
+        candidates += glob.glob("/tmp/cxc-*/broker.sock")
+    existing = []
+    seen = set()
+    for path in candidates:
+        if path in seen or not os.path.exists(path):
+            continue
+        seen.add(path)
+        try:
+            stat = os.stat(path)
+        except OSError:
+            continue
+        existing.append((stat.st_mtime, path))
+    return [path for _, path in sorted(existing, reverse=True)]
+
+
+def compact_thread(thread):
+    status = thread.get("status") if isinstance(thread.get("status"), dict) else {}
+    return {
+        "id": thread.get("id"),
+        "sessionId": thread.get("sessionId"),
+        "name": thread.get("name"),
+        "preview": thread.get("preview"),
+        "cwd": thread.get("cwd"),
+        "path": thread.get("path"),
+        "source": thread.get("source") or thread.get("threadSource"),
+        "statusType": status.get("type"),
+        "updatedAt": thread.get("updatedAt"),
+        "createdAt": thread.get("createdAt"),
+        "approvalMode": thread.get("approvalMode") or thread.get("approval_mode"),
+    }
+
+
+def is_auxiliary_thread(thread):
+    text = " ".join(
+        str(thread.get(key) or "")
+        for key in ("name", "preview", "path")
+    ).lower()
+    return (
+        "codex companion task:" in text
+        or "run a stop-gate review" in text
+        or "<compact_output_contract>" in text
+        or "previous claude turn" in text
+        or "stop-gate review" in text
+    )
+
+
+def compact_text(value, limit=240):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    cleaned = " ".join(value.replace("\t", " ").split())
+    if not cleaned:
+        return None
+    return cleaned[: limit - 1] + "…" if len(cleaned) > limit else cleaned
+
+
+def content_text(content):
+    if isinstance(content, str):
+        return compact_text(content)
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content")
+                if isinstance(text, str):
+                    parts.append(text)
+            elif isinstance(item, str):
+                parts.append(item)
+        return compact_text(" ".join(parts))
+    return compact_text(content)
+
+
+def item_label(item):
+    item_type = item.get("type") or "item"
+    status = item.get("status")
+    if item_type == "agentMessage":
+        return compact_text(item.get("text"), 120)
+    if item_type == "userMessage":
+        return content_text(item.get("content"))
+    if item_type == "commandExecution":
+        command = item.get("command") or item.get("cmd")
+        return compact_text(f"Command: {command}" if command else "Command execution", 120)
+    if item_type == "fileChange":
+        changes = item.get("changes")
+        if isinstance(changes, list):
+            return f"File changes: {len(changes)}"
+        return "File changes"
+    if item_type == "toolCall":
+        name = item.get("name") or item.get("toolName")
+        return compact_text(f"Tool: {name}" if name else "Tool call", 120)
+    if status:
+        return f"{item_type}: {status}"
+    return str(item_type)
+
+
+def turn_summary(thread):
+    turns = thread.get("turns") if isinstance(thread.get("turns"), list) else []
+    if not turns:
+        return {"turnCount": 0}
+
+    turn = turns[-1]
+    items = turn.get("items") if isinstance(turn.get("items"), list) else []
+    active_statuses = {"running", "in_progress", "inprogress", "pending", "started", "streaming", "queued"}
+    failed_statuses = {"failed", "failure", "error"}
+    active_count = 0
+    failed_count = 0
+    last_user_text = None
+    last_agent_text = None
+    last_work_label = None
+    last_item_type = None
+    last_item_status = None
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        item_status = str(item.get("status") or "").lower()
+        if item_status in active_statuses:
+            active_count += 1
+        if item_status in failed_statuses:
+            failed_count += 1
+        if item_type == "userMessage":
+            last_user_text = content_text(item.get("content")) or last_user_text
+        elif item_type == "agentMessage":
+            last_agent_text = compact_text(item.get("text")) or last_agent_text
+        else:
+            label = item_label(item)
+            if label:
+                last_work_label = label
+        last_item_type = item_type or last_item_type
+        last_item_status = item.get("status") or last_item_status
+
+    return {
+        "turnCount": len(turns),
+        "lastTurnId": turn.get("id"),
+        "lastTurnStatus": turn.get("status"),
+        "lastTurnStartedAt": turn.get("startedAt"),
+        "lastTurnCompletedAt": turn.get("completedAt"),
+        "lastTurnDurationMs": turn.get("durationMs"),
+        "lastUserText": last_user_text,
+        "lastAgentText": last_agent_text,
+        "lastWorkLabel": last_work_label,
+        "lastItemType": last_item_type,
+        "lastItemStatus": last_item_status,
+        "activeItemCount": active_count,
+        "failedItemCount": failed_count,
+    }
+
+
+def read_thread_detail(sock, thread_id, request_id):
+    result = rpc(sock, request_id, "thread/read", {
+        "threadId": thread_id,
+        "includeTurns": True,
+    })
+    thread = result.get("thread") if isinstance(result.get("thread"), dict) else result
+    if not isinstance(thread, dict):
+        return {}
+    compact = compact_thread(thread)
+    compact.update(turn_summary(thread))
+    return compact
+
+
+def read_threads(sock_path, limit, read_visible_details=False, read_limit=8):
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(4)
+    sock.connect(sock_path)
+    try:
+        rpc(sock, 1, "initialize", {
+            "clientInfo": {
+                "name": "Agent Island",
+                "title": "Agent Island",
+                "version": "0.1.0",
+            },
+            "capabilities": {
+                "experimentalApi": True,
+                "requestAttestation": False,
+            },
+        })
+        sock.sendall(json.dumps({"method": "initialized", "params": {}}, separators=(",", ":")).encode("utf-8") + b"\n")
+        result = rpc(sock, 2, "thread/list", {
+            "archived": False,
+            "limit": limit,
+            "sortKey": "updated_at",
+        })
+        data = result.get("data") if isinstance(result.get("data"), list) else []
+        threads = [compact_thread(item) for item in data if isinstance(item, dict)]
+        if not read_visible_details:
+            return threads
+
+        detailed = []
+        request_id = 3
+        remaining_reads = read_limit
+        for thread in threads:
+            if remaining_reads > 0 and thread.get("id") and not is_auxiliary_thread(thread):
+                try:
+                    detail = read_thread_detail(sock, thread["id"], request_id)
+                    request_id += 1
+                    remaining_reads -= 1
+                    thread.update({key: value for key, value in detail.items() if value is not None})
+                except Exception as exc:
+                    thread["readError"] = str(exc)
+            detailed.append(thread)
+        return detailed
+    finally:
+        sock.close()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--socket")
+    parser.add_argument("--limit", type=int, default=30)
+    parser.add_argument("--read-visible-details", action="store_true")
+    parser.add_argument("--read-limit", type=int, default=8)
+    args = parser.parse_args()
+
+    sockets = [args.socket] if args.socket else discover_sockets()
+    errors = []
+    if not sockets:
+        print(json.dumps({
+            "ok": False,
+            "error": "no broker sockets found",
+            "errors": [],
+        }, ensure_ascii=False, separators=(",", ":")))
+        return 1
+
+    for sock_path in sockets:
+        try:
+            threads = read_threads(
+                sock_path,
+                args.limit,
+                read_visible_details=args.read_visible_details,
+                read_limit=max(0, args.read_limit),
+            )
+            print(json.dumps({
+                "ok": True,
+                "socket": sock_path,
+                "threads": threads,
+            }, ensure_ascii=False, separators=(",", ":")))
+            return 0
+        except Exception as exc:
+            errors.append({"socket": sock_path, "error": str(exc)})
+
+    print(json.dumps({
+        "ok": False,
+        "errors": errors,
+    }, ensure_ascii=False, separators=(",", ":")))
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

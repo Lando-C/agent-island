@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""Adversarial checks for Agent Island's session reducer semantics.
+
+This is a lightweight spec mirror for the Swift reducer. It catches the failure
+mode that caused stale PostToolUse events to look like real active work.
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+
+
+def reduce_phase(events: list[tuple[str, str]]) -> str:
+    active: Counter[str] = Counter()
+    attention: tuple[str, str] | None = None
+    terminal: tuple[str, str] | None = None
+    queued: tuple[str, str] | None = None
+    last: tuple[str, str] | None = None
+    seen: set[tuple[str, str, int]] = set()
+
+    for index, (event, tool) in enumerate(events):
+        key = (event, tool, index)
+        if key in seen:
+            continue
+        seen.add(key)
+        last = (event, tool)
+
+        if event == "PreToolUse":
+            active[tool] += 1
+            attention = None
+        elif event == "PostToolUse":
+            if active[tool] > 1:
+                active[tool] -= 1
+            else:
+                active.pop(tool, None)
+            attention = None
+        elif event in {"PermissionRequest", "PostToolUseFailure"}:
+            if active[tool] > 1:
+                active[tool] -= 1
+            else:
+                active.pop(tool, None)
+            attention = (event, tool)
+        elif event == "Stop":
+            active.clear()
+            attention = None
+            terminal = (event, tool)
+        elif event == "UserPromptSubmit":
+            attention = None
+            queued = (event, tool)
+
+    if attention:
+        return "needs_attention"
+    if sum(active.values()) > 0:
+        return "working"
+    if terminal:
+        return "done"
+    if last and last[0] == "PostToolUse":
+        return "thinking"
+    if queued:
+        return "queued"
+    return "idle"
+
+
+def main() -> int:
+    cases = {
+        "tool_completed_not_working": (
+            [("PreToolUse", "Bash"), ("PostToolUse", "Bash")],
+            "thinking",
+        ),
+        "tool_still_running": (
+            [("PreToolUse", "Bash")],
+            "working",
+        ),
+        "parallel_one_left": (
+            [("PreToolUse", "Bash"), ("PreToolUse", "Read"), ("PostToolUse", "Bash")],
+            "working",
+        ),
+        "permission_blocks": (
+            [("PreToolUse", "Bash"), ("PermissionRequest", "Bash")],
+            "needs_attention",
+        ),
+        "stop_completes": (
+            [("PreToolUse", "Bash"), ("PostToolUse", "Bash"), ("Stop", "")],
+            "done",
+        ),
+        "new_work_clears_attention": (
+            [("PermissionRequest", "Bash"), ("PreToolUse", "Read")],
+            "working",
+        ),
+    }
+
+    failed = False
+    for name, (events, expected) in cases.items():
+        actual = reduce_phase(events)
+        status = "OK" if actual == expected else "FAIL"
+        print(f"{status} {name}: {actual} expected {expected}")
+        failed = failed or actual != expected
+
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

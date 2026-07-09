@@ -1,0 +1,240 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA_DIR="$HOME/.agent-island"
+EVENTS="$DATA_DIR/events.jsonl"
+LOG="$DATA_DIR/agent-island.log"
+BRIDGE="$SCRIPT_DIR/agent-island-bridge.py"
+PROBE="$SCRIPT_DIR/codex-broker-probe"
+INSTALL_HOOKS="$SCRIPT_DIR/install-hooks"
+AUTO_APPROVAL="$DATA_DIR/auto-approval.json"
+
+pass_count=0
+warn_count=0
+fail_count=0
+
+status() {
+  local level="$1"
+  local name="$2"
+  local detail="${3:-}"
+  case "$level" in
+    PASS) pass_count=$((pass_count + 1)) ;;
+    WARN) warn_count=$((warn_count + 1)) ;;
+    FAIL) fail_count=$((fail_count + 1)) ;;
+  esac
+  if [[ -n "$detail" ]]; then
+    printf '[%s] %s — %s\n' "$level" "$name" "$detail"
+  else
+    printf '[%s] %s\n' "$level" "$name"
+  fi
+}
+
+section() {
+  printf '\n## %s\n' "$1"
+}
+
+command_path() {
+  local name="$1"
+  if command -v "$name" >/dev/null 2>&1; then
+    command -v "$name"
+    return 0
+  fi
+  for path in "/opt/homebrew/bin/$name" "/usr/local/bin/$name" "/usr/bin/$name" "/Applications/${name}.app/Contents/MacOS/$name"; do
+    if [[ -x "$path" ]]; then
+      echo "$path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+json_contains_bridge() {
+  local path="$1"
+  [[ -f "$path" ]] || return 2
+  python3 - "$path" <<'PY'
+import json, sys
+path = sys.argv[1]
+try:
+    data = json.load(open(path, encoding="utf-8"))
+except Exception:
+    sys.exit(3)
+text = json.dumps(data, ensure_ascii=False)
+sys.exit(0 if "agent-island-bridge.py" in text else 1)
+PY
+}
+
+line_count() {
+  [[ -f "$1" ]] && wc -l < "$1" | tr -d ' ' || echo 0
+}
+
+mtime_epoch() {
+  [[ -e "$1" ]] && stat -f %m "$1" 2>/dev/null || echo 0
+}
+
+printf '# Agent Island Diagnostics\n'
+printf 'Generated: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')"
+printf 'Script: %s\n' "$0"
+
+section "App"
+if pgrep -f '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' >/dev/null 2>&1; then
+  status PASS "Agent Island process" "$(pgrep -fl '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' | head -n 1)"
+else
+  status WARN "Agent Island process" "not running from /Applications"
+fi
+if [[ -x "/Applications/Agent Island.app/Contents/MacOS/AgentIsland" ]]; then
+  status PASS "Installed app binary" "/Applications/Agent Island.app"
+else
+  status WARN "Installed app binary" "missing /Applications/Agent Island.app"
+fi
+if [[ -x "$BRIDGE" ]]; then
+  status PASS "Hook bridge executable" "$BRIDGE"
+else
+  status FAIL "Hook bridge executable" "$BRIDGE is missing or not executable"
+fi
+
+section "Hooks"
+if json_contains_bridge "$HOME/.claude/settings.json"; then
+  status PASS "Claude Code hooks" "$HOME/.claude/settings.json"
+else
+  rc=$?
+  if [[ "$rc" == "2" ]]; then
+    status WARN "Claude Code hooks" "~/.claude/settings.json not found"
+  else
+    status FAIL "Claude Code hooks" "agent-island bridge not installed or invalid JSON"
+  fi
+fi
+if json_contains_bridge "$HOME/.codex/hooks.json"; then
+  status PASS "Codex CLI hooks" "$HOME/.codex/hooks.json"
+else
+  rc=$?
+  if [[ "$rc" == "2" ]]; then
+    status WARN "Codex CLI hooks" "~/.codex/hooks.json not found"
+  else
+    status FAIL "Codex CLI hooks" "agent-island bridge not installed or invalid JSON"
+  fi
+fi
+if [[ -f "$HOME/.codex/config.toml" ]] && grep -Eq '^[[:space:]]*hooks[[:space:]]*=[[:space:]]*true' "$HOME/.codex/config.toml"; then
+  status PASS "Codex hooks feature" "$HOME/.codex/config.toml"
+else
+  status WARN "Codex hooks feature" "config.toml does not visibly contain hooks = true"
+fi
+if [[ -x "$INSTALL_HOOKS" ]]; then
+  status PASS "One-click hook repair script" "$INSTALL_HOOKS"
+else
+  status FAIL "One-click hook repair script" "$INSTALL_HOOKS missing"
+fi
+
+section "Event Stream"
+if [[ -f "$EVENTS" ]]; then
+  count="$(line_count "$EVENTS")"
+  age=$(( $(date +%s) - $(mtime_epoch "$EVENTS") ))
+  status PASS "Events log" "$EVENTS lines=$count age=${age}s"
+  last="$(tail -n 1 "$EVENTS" 2>/dev/null | cut -c 1-240)"
+  [[ -n "$last" ]] && printf 'Last event: %s\n' "$last"
+else
+  status WARN "Events log" "$EVENTS not found yet"
+fi
+if [[ -f "$LOG" ]]; then
+  status PASS "App log" "$LOG"
+else
+  status WARN "App log" "$LOG not found yet"
+fi
+
+section "Permissions"
+accessibility="$(osascript -e 'tell application "System Events" to UI elements enabled' 2>&1)"
+if [[ "$accessibility" == "true" ]]; then
+  status PASS "Accessibility" "UI scripting enabled"
+else
+  status WARN "Accessibility" "$accessibility"
+fi
+automation="$(osascript -e 'tell application "System Events" to count processes' 2>&1)"
+if [[ "$automation" =~ ^[0-9]+$ ]]; then
+  status PASS "Apple Events / System Events" "process count=$automation"
+else
+  status WARN "Apple Events / System Events" "$automation"
+fi
+
+section "Codex Broker"
+if [[ -x "$PROBE" ]]; then
+  broker_output="$("$PROBE" --limit 20 --read-visible-details --read-limit 2 2>&1)"
+  broker_rc=$?
+  if [[ "$broker_rc" == "0" ]]; then
+    visible="$(python3 - "$broker_output" <<'PY'
+import json, sys
+try:
+    data = json.loads(sys.argv[1])
+    threads = data.get("threads") or []
+    visible = [
+        t for t in threads
+        if not t.get("auxiliary") and not t.get("isAuxiliary") and not t.get("is_auxiliary")
+    ]
+    print(f"socket={data.get('socket')} threads={len(threads)} visible={len(visible)}")
+except Exception:
+    print(sys.argv[1][:240])
+PY
+)"
+    status PASS "Codex broker probe" "$visible"
+  else
+    status WARN "Codex broker probe" "$(echo "$broker_output" | head -n 1 | cut -c 1-240)"
+  fi
+else
+  status WARN "Codex broker probe" "$PROBE missing"
+fi
+
+section "Terminal Jump"
+if tmux_path="$(command_path tmux)"; then
+  if "$tmux_path" list-sessions >/tmp/agent-island-tmux.out 2>/tmp/agent-island-tmux.err; then
+    status PASS "tmux" "$tmux_path sessions=$(wc -l < /tmp/agent-island-tmux.out | tr -d ' ')"
+  else
+    status WARN "tmux" "$tmux_path installed, no accessible server ($(head -n 1 /tmp/agent-island-tmux.err 2>/dev/null))"
+  fi
+else
+  status WARN "tmux" "not installed"
+fi
+for tool in wezterm kitten kitty osascript; do
+  if path="$(command_path "$tool")"; then
+    status PASS "terminal helper: $tool" "$path"
+  else
+    status WARN "terminal helper: $tool" "not found"
+  fi
+done
+for app in "iTerm2" "Terminal" "Ghostty" "WezTerm" "Warp" "kitty" "cmux" "Kaku"; do
+  if pgrep -x "$app" >/dev/null 2>&1 || pgrep -f "/${app}.app/" >/dev/null 2>&1; then
+    status PASS "running terminal: $app" "detected"
+  else
+    status WARN "running terminal: $app" "not running"
+  fi
+done
+
+section "Web/App Surfaces"
+for app in "Codex" "Claude" "Claude Science" "ChatGPT" "Google Chrome" "Safari"; do
+  if pgrep -x "$app" >/dev/null 2>&1 || pgrep -f "/${app}.app/" >/dev/null 2>&1; then
+    status PASS "running app: $app" "detected"
+  else
+    status WARN "running app: $app" "not running"
+  fi
+done
+
+section "Auto Approval"
+if [[ -f "$AUTO_APPROVAL" ]]; then
+  enabled="$(python3 - "$AUTO_APPROVAL" <<'PY'
+import json, sys
+try:
+    data = json.load(open(sys.argv[1], encoding="utf-8"))
+    print("enabled=true" if data.get("enabled") else "enabled=false")
+except Exception as exc:
+    print(f"invalid: {exc}")
+PY
+)"
+  status WARN "Auto approval" "$enabled; dangerous tools are still never auto-approved"
+else
+  status PASS "Auto approval" "disabled by default; create ~/.agent-island/auto-approval.json to opt in"
+fi
+
+section "Summary"
+printf 'PASS=%d WARN=%d FAIL=%d\n' "$pass_count" "$warn_count" "$fail_count"
+if [[ "$fail_count" -gt 0 ]]; then
+  exit 2
+fi
+exit 0

@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    name: Build and validate
+    runs-on: macos-14
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Swift build
+        run: swift build
+
+      - name: Python syntax
+        run: python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe
+
+      - name: Shell syntax
+        run: bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install-hooks scripts/agent-island-event
+
+      - name: Reducer validation
+        run: scripts/validate-session-reducer
+
+      - name: Expansion validation
+        run: scripts/validate-expansion-controller
+
+      - name: Codex broker probe validation
+        run: scripts/validate-codex-broker-probe

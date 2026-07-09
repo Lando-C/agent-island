@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, for example v0.1.0
+        required: true
+
+jobs:
+  package:
+    name: Package macOS app
+    runs-on: macos-14
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Build app bundle
+        run: scripts/build-app
+
+      - name: Create zip
+        run: |
+          cd dist
+          ditto -c -k --keepParent "Agent Island.app" "Agent-Island-macOS.zip"
+          shasum -a 256 "Agent-Island-macOS.zip" > SHA256SUMS
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Agent-Island-macOS
+          path: |
+            dist/Agent-Island-macOS.zip
+            dist/SHA256SUMS

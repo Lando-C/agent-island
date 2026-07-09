@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+import json
+import subprocess
+import sys
+
+
+def is_auxiliary(thread):
+    text = " ".join(
+        str(thread.get(key) or "")
+        for key in ("name", "preview", "path")
+    ).lower()
+    return (
+        "codex companion task:" in text
+        or "run a stop-gate review" in text
+        or "<compact_output_contract>" in text
+        or "previous claude turn" in text
+        or "stop-gate review" in text
+    )
+
+
+def main():
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/codex-broker-probe",
+            "--limit",
+            "40",
+            "--read-visible-details",
+            "--read-limit",
+            "4",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if not completed.stdout.strip():
+        raise SystemExit(completed.stderr.strip() or "broker probe produced no JSON")
+    payload = json.loads(completed.stdout)
+    if not payload.get("ok"):
+        print(f"SKIP codex_broker_probe unavailable: {payload.get('error') or payload.get('errors')}")
+        return
+
+    threads = payload.get("threads") or []
+    visible = [thread for thread in threads if not is_auxiliary(thread)]
+    auxiliary = [thread for thread in threads if is_auxiliary(thread)]
+    leaked = [thread for thread in visible if "Codex Companion Task:" in str(thread.get("name") or "")]
+    if leaked:
+        raise SystemExit(f"auxiliary companion thread leaked into visible set: {leaked[0].get('id')}")
+    visible_with_details = [thread for thread in visible if thread.get("turnCount") is not None]
+    auxiliary_with_details = [thread for thread in auxiliary if thread.get("turnCount") is not None]
+    if visible and not visible_with_details:
+        raise SystemExit("visible broker threads did not include compact thread/read details")
+    if auxiliary_with_details:
+        raise SystemExit(f"auxiliary thread was expanded with thread/read: {auxiliary_with_details[0].get('id')}")
+
+    print(
+        f"OK codex_broker_probe socket={payload.get('socket')} "
+        f"threads={len(threads)} visible={len(visible)} "
+        f"visible_with_details={len(visible_with_details)} auxiliary={len(auxiliary)}"
+    )
+
+
+if __name__ == "__main__":
+    main()

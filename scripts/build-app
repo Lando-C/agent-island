@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_DIR="$ROOT/dist/Agent Island.app"
+CONTENTS="$APP_DIR/Contents"
+MACOS="$CONTENTS/MacOS"
+RESOURCES="$CONTENTS/Resources"
+
+cd "$ROOT"
+swift build -c release
+
+rm -rf "$APP_DIR"
+mkdir -p "$MACOS" "$RESOURCES"
+cp "$ROOT/.build/release/AgentIsland" "$MACOS/AgentIsland"
+mkdir -p "$RESOURCES/scripts"
+cp -R "$ROOT/scripts/." "$RESOURCES/scripts/"
+find "$RESOURCES/scripts" -type d -name "__pycache__" -prune -exec rm -rf {} +
+find "$RESOURCES/scripts" -type f -exec chmod +x {} +
+
+cat > "$CONTENTS/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>AgentIsland</string>
+  <key>CFBundleIdentifier</key>
+  <string>local.agent-island</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>Agent Island</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.1.0</string>
+  <key>CFBundleVersion</key>
+  <string>1</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>13.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSAppleEventsUsageDescription</key>
+  <string>Agent Island uses Apple Events to inspect frontmost ChatGPT/browser UI state and focus the related app window when clicked.</string>
+</dict>
+</plist>
+PLIST
+
+echo "$APP_DIR"

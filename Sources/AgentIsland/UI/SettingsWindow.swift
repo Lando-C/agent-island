@@ -1,0 +1,504 @@
+import AppKit
+import Foundation
+import ServiceManagement
+import SwiftUI
+
+enum AgentIslandSettingsKeys {
+    static let idleWidth = "agentIsland.appearance.idleWidth"
+    static let workingWidth = "agentIsland.appearance.workingWidth"
+    static let settingsChanged = Notification.Name("AgentIslandSettingsChanged")
+}
+
+final class AgentSettingsWindowController: NSWindowController {
+    init(
+        scriptsRoot: URL,
+        reinstallHooks: @escaping () -> Void,
+        copyDiagnostics: @escaping () -> Void
+    ) {
+        let view = AgentSettingsView(
+            scriptsRoot: scriptsRoot,
+            reinstallHooks: reinstallHooks,
+            copyDiagnostics: copyDiagnostics
+        )
+        let hostingView = NSHostingView(rootView: view)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 860, height: 560),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Agent Island Settings"
+        window.contentView = hostingView
+        window.center()
+        super.init(window: window)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+private enum SettingsTab: String, CaseIterable, Identifiable {
+    case appearance = "外观"
+    case system = "系统"
+    case safety = "安全"
+    case diagnostics = "诊断"
+    case roadmap = "路线"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .appearance: return "slider.horizontal.3"
+        case .system: return "gearshape"
+        case .safety: return "lock.shield"
+        case .diagnostics: return "stethoscope"
+        case .roadmap: return "map"
+        }
+    }
+}
+
+struct AgentSettingsView: View {
+    let scriptsRoot: URL
+    let reinstallHooks: () -> Void
+    let copyDiagnostics: () -> Void
+
+    @State private var selectedTab: SettingsTab = .diagnostics
+    @State private var diagnosticsText = "点击 Run Diagnostics 生成报告。"
+    @State private var diagnosticsRunning = false
+    @State private var autoApprovalEnabled = AutoApprovalStore.load().enabled
+    @State private var allowReadOnly = AutoApprovalStore.load().allowReadOnly
+    @State private var idleWidth = AgentSettingsStore.idleWidth
+    @State private var workingWidth = AgentSettingsStore.workingWidth
+    @State private var launchStatus = LaunchAtLoginController.statusText
+    @State private var settingsMessage = ""
+
+    var body: some View {
+        HStack(spacing: 0) {
+            sidebar
+            Divider()
+            content
+        }
+        .frame(minWidth: 760, minHeight: 500)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear {
+            runDiagnostics()
+        }
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Agent Island")
+                .font(.system(size: 18, weight: .bold))
+                .padding(.horizontal, 14)
+                .padding(.top, 18)
+                .padding(.bottom, 8)
+
+            ForEach(SettingsTab.allCases) { tab in
+                Button {
+                    selectedTab = tab
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: tab.icon)
+                            .frame(width: 18)
+                        Text(tab.rawValue)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .foregroundColor(selectedTab == tab ? .white : .primary)
+                    .background(
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(selectedTab == tab ? Color.accentColor : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 10)
+            }
+
+            Spacer()
+
+            Text("AI Agent Operations Island")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .padding(14)
+        }
+        .frame(width: 190)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            switch selectedTab {
+            case .appearance:
+                appearanceTab
+            case .system:
+                systemTab
+            case .safety:
+                safetyTab
+            case .diagnostics:
+                diagnosticsTab
+            case .roadmap:
+                roadmapTab
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(22)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(selectedTab.rawValue)
+                .font(.system(size: 24, weight: .bold))
+            Text(headerSubtitle)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var headerSubtitle: String {
+        switch selectedTab {
+        case .appearance:
+            return "控制刘海宽度和后续吉祥物展示。"
+        case .system:
+            return "管理启动、权限和 Hook 修复入口。"
+        case .safety:
+            return "自动审批必须可解释、可关闭、边界明确。"
+        case .diagnostics:
+            return "把权限、Hook、Socket、tmux、终端跳转链路变成可见状态。"
+        case .roadmap:
+            return "公开发布前的产品化路线和功能覆盖面。"
+        }
+    }
+
+    private var appearanceTab: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            settingSection("刘海宽度") {
+                widthSlider("待机宽度", value: $idleWidth, range: 320...760)
+                widthSlider("工作/展开宽度", value: $workingWidth, range: 420...1040)
+                Text("宽度会立即保存，并在下一次展开/收起或屏幕变化时应用。")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+
+            settingSection("离岛和吉祥物") {
+                roadmapLine("离岛模式", "长按 0.35s 向下拖拽，浮动窗口位置持久化。")
+                roadmapLine("动态吉祥物", "每个引擎支持 idle / working / warning 三态。")
+                roadmapLine("声音提示", "开始、完成、需要审批、异常四类声音，默认关闭。")
+            }
+        }
+    }
+
+    private func widthSlider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(Int(value.wrappedValue)) px")
+                    .foregroundColor(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: value, in: range, step: 10)
+                .onChange(of: value.wrappedValue) { _ in
+                    AgentSettingsStore.idleWidth = idleWidth
+                    AgentSettingsStore.workingWidth = workingWidth
+                    NotificationCenter.default.post(name: AgentIslandSettingsKeys.settingsChanged, object: nil)
+                }
+        }
+    }
+
+    private var systemTab: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            settingSection("启动和权限") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("开机自启")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text(launchStatus)
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                    Button("启用") {
+                        settingsMessage = LaunchAtLoginController.setEnabled(true)
+                        launchStatus = LaunchAtLoginController.statusText
+                    }
+                    Button("关闭") {
+                        settingsMessage = LaunchAtLoginController.setEnabled(false)
+                        launchStatus = LaunchAtLoginController.statusText
+                    }
+                }
+
+                HStack {
+                    Button("辅助功能设置") {
+                        openSystemSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                    }
+                    Button("通知设置") {
+                        openSystemSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+                    }
+                    Button("登录项设置") {
+                        openSystemSettings("x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
+                    }
+                }
+
+                if !settingsMessage.isEmpty {
+                    Text(settingsMessage)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            settingSection("Hooks") {
+                Text("Claude Code 使用 ~/.claude/settings.json，Codex CLI 使用 ~/.codex/hooks.json。")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                Button("重新安装 Hooks") {
+                    reinstallHooks()
+                }
+            }
+        }
+    }
+
+    private var safetyTab: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            settingSection("自动审批") {
+                Toggle("启用只读工具自动审批", isOn: $autoApprovalEnabled)
+                    .help("默认关闭。开启后也只允许 Claude PermissionRequest 的 Read/Grep/Glob/LS/TodoRead 自动通过。")
+                    .onChange(of: autoApprovalEnabled) { _ in saveAutoApproval() }
+                Toggle("允许只读工具", isOn: $allowReadOnly)
+                    .disabled(!autoApprovalEnabled)
+                    .help("只读工具包括 Read、Grep、Glob、LS、TodoRead。Bash 不在自动审批范围内。")
+                    .onChange(of: allowReadOnly) { _ in saveAutoApproval() }
+
+                Text("危险操作永不自动通过：Write、Edit、MultiEdit、NotebookEdit、Bash/Shell、rm、sudo、git push --force、git reset --hard、git clean、权限修改、磁盘操作。")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            settingSection("风险标记") {
+                roadmapLine("safe_read", "只读工具，可选自动通过。")
+                roadmapLine("manual_safe_shell", "看似只读的 shell，也仍需人工确认。")
+                roadmapLine("dangerous_shell", "含删除、强推、sudo、重定向等模式，永不自动通过。")
+            }
+        }
+    }
+
+    private var diagnosticsTab: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Button(diagnosticsRunning ? "Running..." : "Run Diagnostics") {
+                    runDiagnostics()
+                }
+                .disabled(diagnosticsRunning)
+                Button("Copy Report") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(diagnosticsText, forType: .string)
+                }
+                Button("Copy via Menu Action") {
+                    copyDiagnostics()
+                }
+                Spacer()
+                Button("Open Status Folder") {
+                    NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agent-island"))
+                }
+            }
+
+            ScrollView {
+                Text(diagnosticsText)
+                    .font(.system(size: 11, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color(nsColor: .textBackgroundColor))
+            )
+        }
+    }
+
+    private var roadmapTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                settingSection("下一批必须补齐") {
+                    roadmapLine("PendingRequest", "把 approval / request_user_input / AskUserQuestion 做成结构化卡片。")
+                    roadmapLine("聊天详情", "Hook 事件驱动的完整对话和工具调用详情。")
+                    roadmapLine("僵尸检测", "pid/tmux pane 消失自动标记 ended。")
+                    roadmapLine("智能抑制", "用户正看着对应终端/窗口时不弹大提示。")
+                }
+                settingSection("体验层") {
+                    roadmapLine("离岛模式", "外接屏和多空间使用时让状态跟随当前工作屏。")
+                    roadmapLine("吉祥物", "不是装饰，而是 idle/working/warning 的低成本识别。")
+                    roadmapLine("声音", "默认关闭，按事件类型可配置。")
+                }
+                settingSection("开源发布") {
+                    roadmapLine("README", "安装、权限、Hook、安全边界、隐私说明。")
+                    roadmapLine("License hygiene", "MIT/Apache 可复用；GPL/CC BY-NC 只作参考。")
+                    roadmapLine("Homebrew cask", "让用户不用手动 open dist app。")
+                }
+            }
+        }
+    }
+
+    private func settingSection<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+            content()
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+    }
+
+    private func roadmapLine(_ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "checkmark.circle")
+                .foregroundColor(.accentColor)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func runDiagnostics() {
+        diagnosticsRunning = true
+        diagnosticsText = "Running diagnostics..."
+        let script = scriptsRoot.appendingPathComponent("agent-island-diagnostics")
+        DispatchQueue.global(qos: .utility).async {
+            let report = Self.runScript(script)
+            DispatchQueue.main.async {
+                diagnosticsText = report
+                diagnosticsRunning = false
+            }
+        }
+    }
+
+    private func saveAutoApproval() {
+        AutoApprovalStore.save(.init(enabled: autoApprovalEnabled, allowReadOnly: allowReadOnly))
+    }
+
+    private static func runScript(_ script: URL) -> String {
+        guard FileManager.default.isExecutableFile(atPath: script.path) else {
+            return "Missing executable: \(script.path)"
+        }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = [script.path]
+        let output = Pipe()
+        let error = Pipe()
+        process.standardOutput = output
+        process.standardError = error
+        do {
+            try process.run()
+            let outputData = output.fileHandleForReading.readDataToEndOfFile()
+            let errorData = error.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let stdout = String(data: outputData, encoding: .utf8) ?? ""
+            let stderr = String(data: errorData, encoding: .utf8) ?? ""
+            return stderr.isEmpty ? stdout : stdout + "\n\n## stderr\n" + stderr
+        } catch {
+            return "Failed to run diagnostics: \(error.localizedDescription)"
+        }
+    }
+
+    private func openSystemSettings(_ rawURL: String) {
+        guard let url = URL(string: rawURL) else { return }
+        NSWorkspace.shared.open(url)
+    }
+}
+
+enum AgentSettingsStore {
+    static var idleWidth: Double {
+        get {
+            let value = UserDefaults.standard.double(forKey: AgentIslandSettingsKeys.idleWidth)
+            return value > 0 ? value : 640
+        }
+        set { UserDefaults.standard.set(newValue, forKey: AgentIslandSettingsKeys.idleWidth) }
+    }
+
+    static var workingWidth: Double {
+        get {
+            let value = UserDefaults.standard.double(forKey: AgentIslandSettingsKeys.workingWidth)
+            return value > 0 ? value : 640
+        }
+        set { UserDefaults.standard.set(newValue, forKey: AgentIslandSettingsKeys.workingWidth) }
+    }
+}
+
+private struct AutoApprovalSettings: Codable {
+    var enabled: Bool
+    var allowReadOnly: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case allowReadOnly = "allow_read_only"
+    }
+}
+
+private enum AutoApprovalStore {
+    static var url: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".agent-island")
+            .appendingPathComponent("auto-approval.json")
+    }
+
+    static func load() -> AutoApprovalSettings {
+        guard let data = try? Data(contentsOf: url),
+              let settings = try? JSONDecoder().decode(AutoApprovalSettings.self, from: data) else {
+            return AutoApprovalSettings(enabled: false, allowReadOnly: true)
+        }
+        return settings
+    }
+
+    static func save(_ settings: AutoApprovalSettings) {
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(settings) {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+}
+
+private enum LaunchAtLoginController {
+    static var statusText: String {
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            return "已启用。"
+        case .notRegistered:
+            return "未启用。"
+        case .requiresApproval:
+            return "需要在系统设置里确认。"
+        case .notFound:
+            return "当前 app 不在可注册位置，建议从 /Applications 启动。"
+        @unknown default:
+            return "未知状态。"
+        }
+    }
+
+    static func setEnabled(_ enabled: Bool) -> String {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+                return "已请求启用开机自启。"
+            } else {
+                try SMAppService.mainApp.unregister()
+                return "已请求关闭开机自启。"
+            }
+        } catch {
+            return "开机自启设置失败：\(error.localizedDescription)"
+        }
+    }
+}

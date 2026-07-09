@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  agent-island-event <codex|claude> <app|cli> <working|needs_attention|queued|done|error|online|idle|offline> [title] [message]
+
+Examples:
+  agent-island-event codex cli working "Refactor auth" "running tests"
+  agent-island-event codex cli done "Refactor auth" "tests passed"
+  agent-island-event claude cli needs_attention "Permission" "waiting for approval"
+  agent-island-event claude cli error "Batch job" "remote command failed"
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ $# -lt 3 ]]; then
+  usage
+  exit 1
+fi
+
+agent="$1"
+surface="$2"
+phase="$3"
+title="${4:-}"
+message="${5:-}"
+
+python3 - "$agent" "$surface" "$phase" "$title" "$message" <<'PY'
+import json
+import os
+import pathlib
+import sys
+import time
+
+agent, surface, phase, title, message = sys.argv[1:6]
+root = pathlib.Path.home() / ".agent-island"
+root.mkdir(parents=True, exist_ok=True)
+
+event = {
+    "agent": agent,
+    "surface": surface,
+    "status": phase,
+    "title": title,
+    "message": message,
+    "pid": os.getppid(),
+    "ts": time.time(),
+}
+
+with (root / "events.jsonl").open("a", encoding="utf-8") as fh:
+    fh.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+events_path = root / "events.jsonl"
+try:
+    if events_path.stat().st_size > 1_000_000:
+        lines = events_path.read_text(encoding="utf-8").splitlines()
+        events_path.write_text("\n".join(lines[-2000:]) + "\n", encoding="utf-8")
+except Exception:
+    pass
+
+print(root / "events.jsonl")
+PY

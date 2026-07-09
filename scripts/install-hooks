@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BRIDGE="$ROOT/scripts/agent-island-bridge.py"
+
+install_claude=false
+install_codex=false
+
+if [[ $# -eq 0 ]]; then
+  install_claude=true
+  install_codex=true
+fi
+
+for arg in "$@"; do
+  case "$arg" in
+    --all) install_claude=true; install_codex=true ;;
+    --claude) install_claude=true ;;
+    --codex) install_codex=true ;;
+    -h|--help)
+      cat <<USAGE
+Usage: scripts/install-hooks [--all] [--claude] [--codex]
+
+Installs Agent Island hooks. By default the bridge is status-only: it writes
+lifecycle/tool/permission events to ~/.agent-island/events.jsonl and does not
+approve or deny actions. Optional auto approval is disabled unless explicitly
+enabled in ~/.agent-island/auto-approval.json, and dangerous tools are never
+auto-approved.
+USAGE
+      exit 0
+      ;;
+    *) echo "unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
+chmod +x "$BRIDGE"
+
+if $install_claude; then
+  settings="$HOME/.claude/settings.json"
+  mkdir -p "$(dirname "$settings")"
+  [[ -f "$settings" ]] || echo '{}' > "$settings"
+  cp "$settings" "$settings.agent-island.bak"
+
+  python3 - "$settings" "$BRIDGE" <<'PY'
+import json, sys
+path, bridge = sys.argv[1], sys.argv[2]
+cmd = f'"{bridge}" --source claude'
+with open(path, encoding="utf-8") as fh:
+    data = json.load(fh)
+hooks = data.setdefault("hooks", {})
+lifecycle = {"hooks": [{"type": "command", "command": cmd}]}
+approval = {"hooks": [{"type": "command", "command": cmd, "timeout": 86400}]}
+events = {
+    "SessionStart": lifecycle,
+    "SessionEnd": lifecycle,
+    "Notification": lifecycle,
+    "Stop": lifecycle,
+    "PreToolUse": lifecycle,
+    "PostToolUse": lifecycle,
+    "PostToolUseFailure": lifecycle,
+    "UserPromptSubmit": lifecycle,
+    "Elicitation": approval,
+    "PermissionRequest": approval,
+}
+for event, entry in events.items():
+    current = hooks.get(event, [])
+    if not isinstance(current, list):
+        current = []
+    cleaned = []
+    for item in current:
+        item_hooks = [h for h in item.get("hooks", []) if "agent-island-bridge.py" not in h.get("command", "")]
+        if item_hooks:
+            next_item = dict(item)
+            next_item["hooks"] = item_hooks
+            cleaned.append(next_item)
+    cleaned.append(entry)
+    hooks[event] = cleaned
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2, ensure_ascii=False)
+PY
+  echo "installed Claude Code hooks: $settings"
+fi
+
+if $install_codex; then
+  hooks_file="$HOME/.codex/hooks.json"
+  config_file="$HOME/.codex/config.toml"
+  mkdir -p "$(dirname "$hooks_file")"
+  [[ -f "$hooks_file" ]] || echo '{"hooks":{}}' > "$hooks_file"
+  cp "$hooks_file" "$hooks_file.agent-island.bak"
+  [[ -f "$config_file" ]] && cp "$config_file" "$config_file.agent-island.bak" || true
+
+  python3 - "$hooks_file" "$BRIDGE" <<'PY'
+import json, sys
+path, bridge = sys.argv[1], sys.argv[2]
+cmd = f'"{bridge}" --source codex'
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    data = {}
+hooks = data.setdefault("hooks", {})
+events = ["SessionStart", "PreToolUse", "PostToolUse", "Stop", "PermissionRequest"]
+for event in events:
+    current = hooks.get(event, [])
+    if not isinstance(current, list):
+        current = []
+    cleaned = []
+    for item in current:
+        item_hooks = [h for h in item.get("hooks", []) if "agent-island-bridge.py" not in h.get("command", "")]
+        if item_hooks:
+            next_item = dict(item)
+            next_item["hooks"] = item_hooks
+            cleaned.append(next_item)
+    hook = {"type": "command", "command": cmd}
+    if event == "PermissionRequest":
+        hook["timeout"] = 86400
+    cleaned.append({"matcher": "*", "hooks": [hook]})
+    hooks[event] = cleaned
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2, ensure_ascii=False)
+PY
+
+  if command -v codex >/dev/null 2>&1; then
+    codex features enable hooks >/dev/null 2>&1 || true
+  fi
+
+  if ! codex features list 2>/dev/null | grep -E '^hooks[[:space:]]+' | grep -q 'true'; then
+    python3 - "$config_file" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text() if path.exists() else ""
+if "[features]" not in text:
+    text = text.rstrip() + "\n\n[features]\nhooks = true\n"
+else:
+    lines = text.splitlines()
+    out = []
+    in_features = False
+    saw_hooks = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if in_features and not saw_hooks:
+                out.append("hooks = true")
+            in_features = stripped == "[features]"
+            saw_hooks = False
+        if in_features and stripped.startswith("hooks"):
+            line = "hooks = true"
+            saw_hooks = True
+        out.append(line)
+    if in_features and not saw_hooks:
+        out.append("hooks = true")
+    text = "\n".join(out) + "\n"
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(text)
+PY
+  fi
+  echo "installed Codex CLI hooks: $hooks_file"
+fi

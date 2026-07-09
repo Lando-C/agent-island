@@ -1,0 +1,200 @@
+#!/usr/bin/env python3
+from dataclasses import dataclass
+
+
+@dataclass
+class Snapshot:
+    id: str
+    phase: str
+    updated: int
+
+
+class ExpansionModel:
+    def __init__(self):
+        self.now = 0.0
+        self.expanded = False
+        self.reason = "none"
+        self.hovering = False
+        self.spotlight = None
+        self.active_key = None
+        self.auto_timer_enabled = False
+        self.dismissed = {}
+        self.suppress_hover_until = -1
+        self.suppress_spotlight_until = -1
+        self.pending_expand_at = None
+        self.pending_collapse_at = None
+        self.expand_count = 0
+        self.collapse_count = 0
+        self.collapse_on_hover_exit = False
+
+    def tick(self, seconds):
+        self.now += seconds
+        if self.pending_expand_at is not None and self.now >= self.pending_expand_at:
+            self.pending_expand_at = None
+            if self.hovering and not self.expanded:
+                self.set_expanded(True, "hover")
+        if self.pending_collapse_at is not None and self.now >= self.pending_collapse_at:
+            self.pending_collapse_at = None
+            if not self.hovering and self.reason == "hover":
+                self.set_expanded(False, "none")
+
+    def key(self, snapshot):
+        return f"{snapshot.id}::{snapshot.phase}::{snapshot.updated}"
+
+    def set_expanded(self, value, reason):
+        self.reason = reason if value else "none"
+        if self.expanded == value:
+            return
+        self.expanded = value
+        if value:
+            self.expand_count += 1
+        else:
+            self.collapse_count += 1
+
+    def hover(self, value):
+        if value == self.hovering:
+            return
+        self.hovering = value
+        self.pending_expand_at = None
+        self.pending_collapse_at = None
+        if value:
+            if not self.expanded and self.now >= self.suppress_hover_until:
+                self.pending_expand_at = self.now + 0.22
+        else:
+            if self.collapse_on_hover_exit:
+                self.collapse_on_hover_exit = False
+                self.collapse_spotlight()
+            elif self.reason == "hover":
+                self.pending_collapse_at = self.now + 0.24
+
+    def manual_toggle(self):
+        if self.expanded:
+            self.dismiss()
+        else:
+            self.set_expanded(True, "manual")
+
+    def show_spotlight(self, snapshot):
+        if self.now <= self.suppress_spotlight_until:
+            return
+        key = self.key(snapshot)
+        if self.dismissed.get(key, -1) >= self.now:
+            return
+        if self.active_key == key:
+            return
+        keep_manual = self.expanded and self.reason == "manual"
+        self.active_key = key
+        self.auto_timer_enabled = not keep_manual
+        self.spotlight = snapshot
+        self.collapse_on_hover_exit = False
+        self.set_expanded(True, "manual" if keep_manual else "spotlight")
+
+    def spotlight_timer_fired(self):
+        if not self.active_key or not self.auto_timer_enabled:
+            return
+        if self.hovering:
+            self.collapse_on_hover_exit = True
+            return
+        self.collapse_spotlight()
+
+    def collapse_spotlight(self):
+        self.active_key = None
+        self.auto_timer_enabled = False
+        self.spotlight = None
+        self.suppress_spotlight_until = self.now + 2
+        self.set_expanded(False, "none")
+
+    def dismiss(self):
+        if self.active_key:
+            self.dismissed[self.active_key] = self.now + 120
+        self.suppress_hover_until = self.now + 1.2
+        self.suppress_spotlight_until = self.now + 12
+        self.active_key = None
+        self.auto_timer_enabled = False
+        self.spotlight = None
+        self.collapse_on_hover_exit = False
+        self.set_expanded(False, "none")
+
+
+def assert_state(name, got, expected):
+    if got != expected:
+        raise AssertionError(f"{name}: got {got!r}, expected {expected!r}")
+
+
+def hover_bounce_does_not_double_expand():
+    model = ExpansionModel()
+    model.hover(True)
+    model.tick(0.23)
+    assert_state("initial hover expands", model.expanded, True)
+    assert_state("initial expand count", model.expand_count, 1)
+
+    model.hover(False)
+    model.tick(0.10)
+    model.hover(True)
+    model.tick(0.30)
+    assert_state("expanded", model.expanded, True)
+    assert_state("resize jitter did not re-expand", model.expand_count, 1)
+    assert_state("resize jitter did not collapse", model.collapse_count, 0)
+    model.hover(True)
+    model.hover(True)
+    assert_state("duplicate hover enter ignored", model.expand_count, 1)
+
+
+def manual_open_survives_hover_exit():
+    model = ExpansionModel()
+    model.manual_toggle()
+    model.hover(True)
+    model.hover(False)
+    model.tick(1)
+    assert_state("manual still expanded", model.expanded, True)
+    assert_state("manual reason", model.reason, "manual")
+
+
+def dismissed_spotlight_does_not_rebound():
+    model = ExpansionModel()
+    snapshot = Snapshot("codex-app-1", "done", 100)
+    model.show_spotlight(snapshot)
+    assert_state("spotlight opens", model.expanded, True)
+    model.dismiss()
+    model.tick(13)
+    model.show_spotlight(snapshot)
+    assert_state("same spotlight suppressed after dismiss", model.expanded, False)
+    model.tick(108)
+    model.show_spotlight(snapshot)
+    assert_state("same spotlight allowed after expiry", model.expanded, True)
+
+
+def spotlight_waits_for_hover_exit():
+    model = ExpansionModel()
+    model.hover(True)
+    snapshot = Snapshot("claude-app-1", "needs_attention", 200)
+    model.show_spotlight(snapshot)
+    model.spotlight_timer_fired()
+    assert_state("kept open while hovered", model.expanded, True)
+    model.hover(False)
+    assert_state("collapsed on hover exit", model.expanded, False)
+
+
+def manual_spotlight_does_not_auto_collapse():
+    model = ExpansionModel()
+    model.manual_toggle()
+    model.show_spotlight(Snapshot("codex-app-1", "done", 300))
+    assert_state("manual remains reason", model.reason, "manual")
+    model.spotlight_timer_fired()
+    assert_state("manual panel stays open", model.expanded, True)
+
+
+def run():
+    cases = [
+        hover_bounce_does_not_double_expand,
+        manual_open_survives_hover_exit,
+        dismissed_spotlight_does_not_rebound,
+        spotlight_waits_for_hover_exit,
+        manual_spotlight_does_not_auto_collapse,
+    ]
+    for case in cases:
+        case()
+        print(f"OK {case.__name__}")
+
+
+if __name__ == "__main__":
+    run()

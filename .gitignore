@@ -1,0 +1,21 @@
+.DS_Store
+.build/
+dist/
+
+# Python cache from hook/probe validation.
+__pycache__/
+*.pyc
+
+# Local diagnostics and user state should stay outside the repo.
+.agent-island/
+*.log
+
+# Competitor source snapshots are research inputs, not distributable source for
+# this product repository. Keep the reports, matrices, and notices instead.
+research/competitors/repos/
+research/competitors/code-study/
+
+# Xcode/editor local state.
+*.xcuserstate
+xcuserdata/
+.swiftpm/

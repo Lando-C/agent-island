@@ -125,6 +125,7 @@ enum AgentPhase: String, Codable {
 
 private enum AgentIslandControlKeys {
     static let collapseRequested = Notification.Name("AgentIslandCollapseRequested")
+    static let toggleRequested = Notification.Name("AgentIslandToggleRequested")
 }
 
 struct AgentSnapshot: Identifiable, Equatable {
@@ -2941,6 +2942,9 @@ struct IslandView: View {
         .onReceive(NotificationCenter.default.publisher(for: AgentIslandControlKeys.collapseRequested)) { _ in
             expansion.dismissByUser()
         }
+        .onReceive(NotificationCenter.default.publisher(for: AgentIslandControlKeys.toggleRequested)) { _ in
+            expansion.toggleFromHeader()
+        }
     }
 
     private var island: some View {
@@ -3708,6 +3712,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Settings...", action: #selector(showSettings), keyEquivalent: ","))
+        let toggleItem = NSMenuItem(title: "Toggle Island", action: #selector(toggleIslandFromMenu), keyEquivalent: "n")
+        toggleItem.keyEquivalentModifierMask = [.option]
+        menu.addItem(toggleItem)
         menu.addItem(NSMenuItem(title: "Show Island", action: #selector(showIsland), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Hide Island", action: #selector(hideIsland), keyEquivalent: ""))
         menu.addItem(.separator())
@@ -3729,14 +3736,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupKeyMonitors() {
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard event.keyCode == 53, self?.isExpanded == true else { return event }
-            NotificationCenter.default.post(name: AgentIslandControlKeys.collapseRequested, object: nil)
-            return nil
+            if self?.isOptionN(event) == true {
+                self?.toggleIsland()
+                return nil
+            }
+            if event.keyCode == 53, self?.isExpanded == true {
+                NotificationCenter.default.post(name: AgentIslandControlKeys.collapseRequested, object: nil)
+                return nil
+            }
+            return event
         }
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.isOptionN(event) == true {
+                self?.toggleIsland()
+                return
+            }
             guard event.keyCode == 53, self?.isExpanded == true else { return }
             NotificationCenter.default.post(name: AgentIslandControlKeys.collapseRequested, object: nil)
         }
+    }
+
+    private func isOptionN(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 45 else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags.contains(.option)
+            && !flags.contains(.command)
+            && !flags.contains(.control)
     }
 
     private func positionPanel(animate: Bool = false) {
@@ -3780,6 +3805,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func hideIsland() {
         panel?.orderOut(nil)
+    }
+
+    @objc private func toggleIslandFromMenu() {
+        toggleIsland()
+    }
+
+    private func toggleIsland() {
+        if panel?.isVisible != true {
+            panel?.orderFrontRegardless()
+            positionPanel(animate: false)
+        }
+        NotificationCenter.default.post(name: AgentIslandControlKeys.toggleRequested, object: nil)
     }
 
     @objc private func refreshNow() {

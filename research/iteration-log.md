@@ -547,3 +547,22 @@
 - `scripts/validate-session-reducer` 通过。
 - `scripts/validate-expansion-controller` 通过。
 - `scripts/validate-codex-broker-probe` 通过。
+
+## 2026-07-09 Iteration 12 - Option-N global toggle
+
+目标：
+
+- 落地用户要求的 `⌥N` 切换灵动岛。
+- 和 Escape 一样通过 `IslandExpansionController` 状态机处理，不绕过现有 hover/spotlight 规则。
+
+改动：
+
+- `AgentIslandControlKeys` 新增 `toggleRequested`。
+- `IslandView` 监听 toggle notification 并调用 `expansion.toggleFromHeader()`。
+- `AppDelegate.setupKeyMonitors()` 增加 local/global `Option-N` 检测。
+- 状态栏菜单新增 `Toggle Island`，快捷键显示为 `⌥N`。
+- 如果面板已被 Hide Island 隐藏，`Option-N` 会先重新显示面板，再切换展开状态。
+
+验证：
+
+- `swift build` 通过。

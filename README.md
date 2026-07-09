@@ -29,6 +29,7 @@ The goal is not to show that an app is online. The goal is to answer:
 - Scrollable expanded session list.
 - Auto spotlight for working, waiting, done, and error transitions, with short
   duration and manual dismissal.
+- `Escape` closes the expanded panel, and `Option-N` toggles the island.
 - Screen-safe positioning using visible screen bounds, with user-adjustable
   idle/working widths.
 - Settings window with Appearance, System, Safety, Diagnostics, and Roadmap

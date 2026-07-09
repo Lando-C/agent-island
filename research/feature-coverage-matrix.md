@@ -38,7 +38,7 @@
 | 开机自启 | 已完成基础 | `LaunchAtLoginController`, `SettingsWindow.swift` | 已有设置开关；公开发布前需在签名/notarization 下复测 |
 | 设置页重构 / 诊断面板 | 已完成基础 | `Sources/AgentIsland/UI/SettingsWindow.swift` | 已有外观、系统、安全、诊断、路线五个 tab；下一步改为结构化诊断项和一键修复按钮 |
 | 诊断导出 / 一键修复 | 已完成基础 | `scripts/agent-island-diagnostics`, `scripts/install-hooks`, `SettingsWindow.swift`, status menu | 已有菜单复制、设置页运行/复制、权限设置入口、Hook repair；下一步区分必需 FAIL、可修复 WARN、可选 capability |
-| 全局快捷键 / Escape / approval 快捷键 | 部分完成 | `AgentIslandControlKeys`, `AppDelegate.setupKeyMonitors`, `IslandView` | Escape 已可关闭展开面板；Option-N 和 ⌘Y/⌘N 审批快捷键待做 |
+| 全局快捷键 / Escape / approval 快捷键 | 部分完成 | `AgentIslandControlKeys`, `AppDelegate.setupKeyMonitors`, `IslandView` | Escape 已可关闭展开面板；Option-N 已可切换灵动岛；⌘Y/⌘N 审批快捷键待做 |
 | 自动审批 | 部分完成 | `agent-island-bridge.py`, `docs/PRODUCT_BLUEPRINT.md` | 默认关闭；只读工具可 opt-in 自动通过 Claude PermissionRequest；危险工具永不自动通过；Codex 仍 status-only |
 
 ## 下一轮推荐顺序

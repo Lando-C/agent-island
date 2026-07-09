@@ -2949,6 +2949,7 @@ final class AgentMonitor: ObservableObject {
 
 struct IslandView: View {
     @ObservedObject var monitor: AgentMonitor
+    @ObservedObject var pendingRequests: PendingRequestStore
     var onExpandedChange: (Bool) -> Void = { _ in }
     var onSnapshotAction: (AgentSnapshot) -> Void = { _ in }
     @StateObject private var expansion = IslandExpansionController()
@@ -3045,6 +3046,7 @@ struct IslandView: View {
                 if let spotlightSnapshot {
                     SpotlightSummary(
                         snapshot: spotlightSnapshot,
+                        pendingRequest: pendingRequests.request(for: spotlightSnapshot),
                         pulse: pulse,
                         copied: copiedSnapshotID == spotlightSnapshot.id,
                         onOpen: {
@@ -3052,6 +3054,12 @@ struct IslandView: View {
                         },
                         onCopy: {
                             copySnapshotSummary(spotlightSnapshot)
+                        },
+                        onAllow: { request in
+                            pendingRequests.allow(request)
+                        },
+                        onDeny: { request in
+                            pendingRequests.deny(request)
                         },
                         onDismiss: {
                             expansion.dismissByUser()
@@ -3171,6 +3179,7 @@ struct IslandView: View {
                 ForEach(displaySnapshots) { snapshot in
                     AgentRow(
                         snapshot: snapshot,
+                        pendingRequest: pendingRequests.request(for: snapshot),
                         pulse: pulse,
                         copied: copiedSnapshotID == snapshot.id,
                         onOpen: {
@@ -3178,6 +3187,12 @@ struct IslandView: View {
                         },
                         onCopy: {
                             copySnapshotSummary(snapshot)
+                        },
+                        onAllow: { request in
+                            pendingRequests.allow(request)
+                        },
+                        onDeny: { request in
+                            pendingRequests.deny(request)
                         }
                     )
                     .help("点击跳转到 \(snapshot.title)")
@@ -3278,10 +3293,13 @@ struct IslandView: View {
 
 struct AgentRow: View {
     var snapshot: AgentSnapshot
+    var pendingRequest: PendingRequest?
     var pulse: Bool
     var copied: Bool = false
     var onOpen: () -> Void = {}
     var onCopy: () -> Void = {}
+    var onAllow: (PendingRequest) -> Void = { _ in }
+    var onDeny: (PendingRequest) -> Void = { _ in }
     @State private var hovering = false
 
     var body: some View {
@@ -3340,6 +3358,32 @@ struct AgentRow: View {
 
     private var quickActions: some View {
         HStack(spacing: 4) {
+            if let pendingRequest, pendingRequest.canRespondInline, pendingRequest.isPending {
+                Button {
+                    onAllow(pendingRequest)
+                } label: {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.green)
+                        .frame(width: 22, height: 22)
+                        .background(Color.green.opacity(0.14), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("允许本次请求")
+
+                Button {
+                    onDeny(pendingRequest)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.red)
+                        .frame(width: 22, height: 22)
+                        .background(Color.red.opacity(0.14), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("拒绝本次请求")
+            }
+
             Button {
                 onCopy()
             } label: {
@@ -3436,10 +3480,13 @@ struct AgentRow: View {
 
 struct SpotlightSummary: View {
     var snapshot: AgentSnapshot
+    var pendingRequest: PendingRequest?
     var pulse: Bool
     var copied: Bool = false
     var onOpen: () -> Void = {}
     var onCopy: () -> Void = {}
+    var onAllow: (PendingRequest) -> Void = { _ in }
+    var onDeny: (PendingRequest) -> Void = { _ in }
     var onDismiss: () -> Void = {}
 
     var body: some View {
@@ -3474,6 +3521,32 @@ struct SpotlightSummary: View {
 
             if snapshot.hasQuickActions {
                 HStack(spacing: 5) {
+                    if let pendingRequest, pendingRequest.canRespondInline, pendingRequest.isPending {
+                        Button {
+                            onAllow(pendingRequest)
+                        } label: {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.green)
+                                .frame(width: 22, height: 22)
+                                .background(Color.green.opacity(0.14), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("允许本次请求")
+
+                        Button {
+                            onDeny(pendingRequest)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.red)
+                                .frame(width: 22, height: 22)
+                                .background(Color.red.opacity(0.14), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .help("拒绝本次请求")
+                    }
+
                     Button {
                         onCopy()
                     } label: {
@@ -3670,6 +3743,8 @@ extension NSScreen {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = AgentMonitor()
+    private let pendingRequests = PendingRequestStore()
+    private lazy var hookSocketServer = HookSocketServer(store: pendingRequests)
     private var panel: NSPanel?
     private var statusItem: NSStatusItem?
     private var settingsWindowController: AgentSettingsWindowController?
@@ -3719,6 +3794,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupPanel()
         setupStatusItem()
         setupKeyMonitors()
+        hookSocketServer.start()
         islandLog("ui started")
 
         DispatchQueue.main.async { [weak self] in
@@ -3748,6 +3824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let globalKeyMonitor {
             NSEvent.removeMonitor(globalKeyMonitor)
         }
+        hookSocketServer.stop()
     }
 
     private func setupPanel() {
@@ -3772,6 +3849,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let hostingView = NSHostingView(rootView: IslandView(
             monitor: monitor,
+            pendingRequests: pendingRequests,
             onExpandedChange: { [weak self] expanded in
                 self?.setExpanded(expanded)
             },

@@ -5,10 +5,18 @@ work.
 
 ## P0: State and Trust
 
+Done:
+
 - Structured `PendingRequestStore`.
-- In-app allow/deny for Claude PermissionRequest.
+- Local `HookSocketServer` at `~/.agent-island/hook.sock`.
+- In-app allow/deny for Claude `PermissionRequest`.
+- `request_user_input` / elicitation events captured as structured pending
+  requests.
+
+Remaining:
+
 - Codex approval/question response schema validation before write-back.
-- `request_user_input` question cards with option selection.
+- Inline answer UI for `request_user_input` once response schemas are verified.
 - Old idle/waiting session pruning.
 - Zombie detection for pid, process tree, terminal, and tmux pane liveness.
 

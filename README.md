@@ -35,10 +35,15 @@ The goal is not to show that an app is online. The goal is to answer:
 - Settings window with Appearance, System, Safety, Diagnostics, and Roadmap
   tabs.
 - Diagnostics report for app, hooks, event stream, permissions, Codex broker,
-  terminal helpers, app/web surfaces, and auto approval state.
+  hook socket, terminal helpers, app/web surfaces, and auto approval state.
 - Hook installer for:
   - Claude Code: `~/.claude/settings.json`
   - Codex CLI: `~/.codex/hooks.json` and `~/.codex/config.toml`
+- Pending request store and local hook socket for human handoff.
+- In-island allow/deny for Claude Code `PermissionRequest` hooks.
+- `request_user_input` / elicitation events are captured as structured pending
+  requests; write-back remains conservative until each engine response schema is
+  verified.
 - Optional auto approval for safe read-only Claude PermissionRequest tools.
   It is off by default. Dangerous operations are never auto-approved.
 
@@ -105,6 +110,17 @@ Events are written locally:
 ~/.agent-island/agent-island.log
 ```
 
+Human approval requests use a local Unix socket:
+
+```text
+~/.agent-island/hook.sock
+```
+
+The hook bridge connects to that socket for pending requests. Claude Code
+`PermissionRequest` can be allowed or denied directly in the island. If the app
+is not running or the socket is unavailable, the bridge falls back to the native
+agent flow instead of silently approving anything.
+
 ## Safety Model
 
 Auto approval is a trust feature, not a shortcut.
@@ -151,6 +167,7 @@ From the app menu or Settings window, copy/run the diagnostics report. It checks
 
 - App bundle location and packaged scripts.
 - Claude/Codex hook installation.
+- Hook socket availability.
 - Event stream freshness.
 - Accessibility and Apple Events.
 - Codex broker/socket visibility.
@@ -176,7 +193,8 @@ The product direction is documented in:
 
 Next priority is not a UI rewrite. The next product work should be:
 
-1. Structured `PendingRequest` cards for approval and `request_user_input`.
+1. Verify Codex approval and question response schemas before enabling inline
+   write-back.
 2. More exact terminal focusing for Warp, Ghostty, WezTerm, kitty, cmux, and Kaku.
 3. Hook-driven chat history and tool details.
 4. Zombie detection and old-session pruning.

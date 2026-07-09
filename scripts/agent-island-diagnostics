@@ -12,6 +12,7 @@ BRIDGE="$SCRIPT_DIR/agent-island-bridge.py"
 PROBE="$SCRIPT_DIR/codex-broker-probe"
 INSTALL_HOOKS="$SCRIPT_DIR/install-hooks"
 AUTO_APPROVAL="$DATA_DIR/auto-approval.json"
+HOOK_SOCKET="$DATA_DIR/hook.sock"
 
 pass_count=0
 warn_count=0
@@ -126,6 +127,16 @@ if [[ -x "$INSTALL_HOOKS" ]]; then
   status PASS "One-click hook repair script" "$INSTALL_HOOKS"
 else
   status FAIL "One-click hook repair script" "$INSTALL_HOOKS missing"
+fi
+
+section "Hook Socket"
+if [[ -S "$HOOK_SOCKET" ]]; then
+  mode="$(stat -f %Lp "$HOOK_SOCKET" 2>/dev/null || echo unknown)"
+  status PASS "Hook socket" "$HOOK_SOCKET mode=$mode"
+elif pgrep -f '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' >/dev/null 2>&1; then
+  status FAIL "Hook socket" "$HOOK_SOCKET missing while Agent Island is running"
+else
+  status WARN "Hook socket" "$HOOK_SOCKET missing; Agent Island is not running"
 fi
 
 section "Event Stream"

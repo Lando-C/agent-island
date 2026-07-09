@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import time
@@ -27,6 +28,8 @@ from typing import Any
 EVENTS_PATH = Path.home() / ".agent-island" / "events.jsonl"
 LOG_PATH = Path.home() / ".agent-island" / "bridge.log"
 AUTO_APPROVAL_PATH = Path.home() / ".agent-island" / "auto-approval.json"
+HOOK_SOCKET_PATH = Path.home() / ".agent-island" / "hook.sock"
+HOOK_CONNECT_TIMEOUT_SECONDS = 0.4
 
 READ_ONLY_TOOLS = {
     "read",
@@ -737,7 +740,7 @@ def classify(source: str, event: str, payload: dict[str, Any]) -> tuple[str, str
     return "working", f"{source.title()} 活动", (tool or event or "hook event") + suffix
 
 
-def write_event(source: str, phase: str, title: str, message: str, payload: dict[str, Any]) -> None:
+def write_event(source: str, phase: str, title: str, message: str, payload: dict[str, Any]) -> dict[str, Any]:
     EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     pid = os.getppid()
     terminal = terminal_metadata(payload, pid)
@@ -779,6 +782,7 @@ def write_event(source: str, phase: str, title: str, message: str, payload: dict
     with EVENTS_PATH.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(frame, ensure_ascii=False, separators=(",", ":")) + "\n")
     prune_events()
+    return frame
 
 
 def prune_events(max_lines: int = 2000) -> None:
@@ -797,12 +801,125 @@ def hook_response(source: str, event: str) -> dict[str, Any]:
     # ~/.agent-island/auto-approval.json and is limited to verified read-only
     # Claude PermissionRequest tools; dangerous tools are never auto-approved.
     if source == "claude":
-        if event == "permissionrequest":
+        if event in {"permissionrequest", "elicitation", "askuserquestion", "requestuserinput"}:
             return {}
         return {"continue": True, "suppressOutput": True}
     if source == "codex":
         return {}
     return {}
+
+
+def pending_event(source: str, event: str) -> bool:
+    return event in {"permissionrequest", "elicitation", "askuserquestion", "requestuserinput"}
+
+
+def response_schema(source: str, event: str) -> str:
+    if source == "claude" and event == "permissionrequest":
+        return "claude_permission_request"
+    return "status_only"
+
+
+def question_text(payload: dict[str, Any]) -> str:
+    for path in (
+        ("question",),
+        ("prompt",),
+        ("message",),
+        ("notification",),
+        ("input", "question"),
+        ("tool_input", "question"),
+        ("toolInput", "question"),
+        ("parameters", "question"),
+    ):
+        value = nested_value(payload, *path)
+        if isinstance(value, str) and value.strip():
+            return compact_text(value, 500)
+    return ""
+
+
+def question_options(payload: dict[str, Any]) -> list[str]:
+    for path in (
+        ("options",),
+        ("choices",),
+        ("input", "options"),
+        ("tool_input", "options"),
+        ("toolInput", "options"),
+        ("parameters", "options"),
+    ):
+        value = nested_value(payload, *path)
+        if isinstance(value, list):
+            result: list[str] = []
+            for item in value[:6]:
+                if isinstance(item, str):
+                    text = item
+                elif isinstance(item, dict):
+                    text = str(item.get("label") or item.get("value") or item.get("text") or "")
+                else:
+                    text = str(item)
+                text = text.strip()
+                if text:
+                    result.append(compact_text(text, 120))
+            return result
+    return []
+
+
+def socket_request(source: str, event: str, frame: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    request: dict[str, Any] = {
+        "type": "hook_request",
+        "source": source,
+        "surface": frame.get("surface", ""),
+        "event": frame.get("event", "") or event,
+        "status": frame.get("status", ""),
+        "title": frame.get("title", ""),
+        "message": frame.get("message", ""),
+        "session": frame.get("session", ""),
+        "raw_session": frame.get("raw_session", ""),
+        "primary_session": frame.get("primary_session", ""),
+        "parent_session": frame.get("parent_session", ""),
+        "request_id": frame.get("request_id", ""),
+        "tool": frame.get("tool", ""),
+        "tool_input_summary": frame.get("tool_input_summary", ""),
+        "tool_risk": frame.get("tool_risk", ""),
+        "tool_risk_reason": frame.get("tool_risk_reason", ""),
+        "response_schema": response_schema(source, event),
+        "ts": frame.get("ts", time.time()),
+    }
+    question = question_text(payload)
+    if question:
+        request["question"] = question
+    options = question_options(payload)
+    if options:
+        request["options"] = options
+    return request
+
+
+def request_socket_decision(source: str, event: str, frame: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
+    if not pending_event(source, event):
+        return None
+    if not HOOK_SOCKET_PATH.exists():
+        return None
+
+    request = socket_request(source, event, frame, payload)
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+            sock.settimeout(HOOK_CONNECT_TIMEOUT_SECONDS)
+            sock.connect(str(HOOK_SOCKET_PATH))
+            sock.sendall(json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+            sock.shutdown(socket.SHUT_WR)
+            sock.settimeout(None)
+            chunks: list[bytes] = []
+            while True:
+                chunk = sock.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        if not chunks:
+            return None
+        response = json.loads(b"".join(chunks).decode("utf-8"))
+        if isinstance(response, dict):
+            return response
+    except Exception as exc:
+        log(f"hook socket request failed source={source} event={event} error={exc}")
+    return None
 
 
 def main() -> int:
@@ -815,7 +932,7 @@ def main() -> int:
     source = infer_source(payload, args.source)
     event = event_name(payload, args.event)
     phase, title, detail = classify(source, event, payload)
-    write_event(source, phase, title, detail, payload)
+    frame = write_event(source, phase, title, detail, payload)
     if should_auto_allow(source, event, payload):
         log(f"auto approved read-only tool source={source} session={session_id(payload)} tool={tool_name(payload)}")
         print(json.dumps({
@@ -824,6 +941,10 @@ def main() -> int:
                 "decision": {"behavior": "allow"},
             }
         }, separators=(",", ":")))
+        return 0
+    socket_response = request_socket_decision(source, event, frame, payload)
+    if socket_response is not None:
+        print(json.dumps(socket_response, ensure_ascii=False, separators=(",", ":")))
         return 0
     print(json.dumps(hook_response(source, event), separators=(",", ":")))
     return 0

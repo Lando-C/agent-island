@@ -682,6 +682,9 @@ def classify(source: str, event: str, payload: dict[str, Any]) -> tuple[str, str
     where = cwd(payload)
     suffix = f" · {os.path.basename(where)}" if where else ""
 
+    if event == "permissionrequest" and normalize_name(tool) in {"askuserquestion", "exitplanmode"}:
+        return "working", f"{source.title()} 正在继续", "交互输入已交回会话" + suffix
+
     if event in {"permissionrequest", "elicitation", "askuserquestion", "requestuserinput"}:
         title = f"{source.title()} 需要处理"
         detail = tool or "等待人工确认/输入"
@@ -868,6 +871,7 @@ def structured_questions(payload: dict[str, Any], event: str) -> list[dict[str, 
                 "options": options[:8],
                 "multiSelect": bool(item.get("multiSelect") or item.get("multi_select")),
                 "isSecret": bool(item.get("isSecret") or item.get("is_secret")),
+                "allowsOther": event == "askuserquestion" or bool(item.get("isOther") or item.get("allowsOther")),
             })
 
     if result:
@@ -888,6 +892,7 @@ def structured_questions(payload: dict[str, Any], event: str) -> list[dict[str, 
                     "options": [compact_text(item, 120) for item in enum_values[:8]],
                     "multiSelect": value.get("type") == "array",
                     "isSecret": bool(value.get("writeOnly") or value.get("format") == "password"),
+                    "allowsOther": bool(value.get("additionalProperties")),
                 })
             if result:
                 return result
@@ -901,6 +906,7 @@ def structured_questions(payload: dict[str, Any], event: str) -> list[dict[str, 
             "options": question_options(payload),
             "multiSelect": False,
             "isSecret": False,
+            "allowsOther": event == "askuserquestion",
         }]
     return []
 
@@ -991,6 +997,8 @@ def socket_request(source: str, event: str, frame: dict[str, Any], payload: dict
 
 def request_socket_decision(source: str, event: str, frame: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
     if not pending_event(source, event):
+        return None
+    if event == "permissionrequest" and normalize_name(tool_name(payload)) in {"askuserquestion", "exitplanmode"}:
         return None
     if not HOOK_SOCKET_PATH.exists():
         return None

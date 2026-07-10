@@ -179,12 +179,26 @@ final class HookSocketServer {
             }
             let pending = self.store.upsert(socketRequest: request)
             self.queue.async {
+                self.prunePendingConnections(now: Date())
                 if pending.canRespondInline {
-                    self.pendingConnections[pending.id] = PendingConnection(
+                    let next = PendingConnection(
                         fd: fd,
                         request: pending,
                         receivedAt: Date()
                     )
+                    if let existing = self.pendingConnections[pending.id],
+                       Date().timeIntervalSince(existing.receivedAt) < 5 {
+                        self.sendFallbackAndClose(fd)
+                        islandLog("hook socket ignored simultaneous duplicate id=\(pending.id)")
+                        return
+                    }
+                    if let stale = self.pendingConnections.updateValue(next, forKey: pending.id) {
+                        self.sendFallbackAndClose(stale.fd)
+                        islandLog("hook socket replaced stale duplicate id=\(pending.id)")
+                    }
+                    self.queue.asyncAfter(deadline: .now() + 30 * 60) { [weak self] in
+                        self?.expireConnection(id: pending.id, fd: fd)
+                    }
                     islandLog("hook socket pending id=\(pending.id) session=\(pending.sessionID ?? "nil")")
                 } else {
                     self.sendFallbackAndClose(fd)
@@ -325,6 +339,27 @@ final class HookSocketServer {
     private static func jsonObject(_ text: String?) -> [String: Any]? {
         guard let text, let data = text.data(using: .utf8) else { return nil }
         return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private func prunePendingConnections(now: Date) {
+        let expired = pendingConnections.filter { now.timeIntervalSince($0.value.receivedAt) > 30 * 60 }
+        guard !expired.isEmpty else { return }
+        for (id, pending) in expired {
+            pendingConnections.removeValue(forKey: id)
+            sendFallbackAndClose(pending.fd)
+            DispatchQueue.main.async { [weak self] in
+                self?.store.markFailed(id: id, message: "请求等待超时，请在原窗口处理")
+            }
+        }
+    }
+
+    private func expireConnection(id: String, fd: Int32) {
+        guard let pending = pendingConnections[id], pending.fd == fd else { return }
+        pendingConnections.removeValue(forKey: id)
+        sendFallbackAndClose(fd)
+        DispatchQueue.main.async { [weak self] in
+            self?.store.markFailed(id: id, message: "请求等待超时，请在原窗口处理")
+        }
     }
 
     private func sendFallbackAndClose(_ fd: Int32) {

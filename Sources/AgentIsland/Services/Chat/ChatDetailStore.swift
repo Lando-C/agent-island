@@ -60,7 +60,7 @@ final class ChatDetailStore: ObservableObject {
             return ([], nil, "当前引擎尚未提供可读的本地聊天记录")
         }
 
-        guard let file = newestTranscript(roots: roots, sessionID: sessionID) else {
+        guard let file = transcriptFromEventLog(sessionID: sessionID) ?? newestTranscript(roots: roots, sessionID: sessionID) else {
             return ([], nil, "没有找到 session \(shortID(sessionID)) 的本地记录")
         }
         guard let text = try? String(contentsOf: file, encoding: .utf8) else {
@@ -80,10 +80,42 @@ final class ChatDetailStore: ObservableObject {
                 break
             }
         }
-        let visible = Array(items.suffix(600))
+        let visible = deduplicated(items)
         return visible.isEmpty
             ? ([], file.path, "记录存在，但没有可展示的对话或工具事件")
             : (visible, file.path, nil)
+    }
+
+    private static func transcriptFromEventLog(sessionID: String) -> URL? {
+        let log = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".agent-island/events.jsonl")
+        guard let text = try? String(contentsOf: log, encoding: .utf8),
+              let path = transcriptPath(
+                inEventLog: text,
+                sessionID: sessionID,
+                fileExists: FileManager.default.fileExists(atPath:)
+              ) else { return nil }
+        return URL(fileURLWithPath: path)
+    }
+
+    static func transcriptPath(
+        inEventLog text: String,
+        sessionID: String,
+        fileExists: (String) -> Bool
+    ) -> String? {
+        for line in text.split(separator: "\n").reversed() {
+            guard let data = String(line).data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            let identities = ["session", "raw_session", "primary_session", "parent_session"]
+                .compactMap { event[$0] as? String }
+            guard identities.contains(sessionID),
+                  let rawPath = event["transcript_path"] as? String,
+                  !rawPath.isEmpty else { continue }
+            let expanded = NSString(string: rawPath).expandingTildeInPath
+            guard fileExists(expanded) else { continue }
+            return expanded
+        }
+        return nil
     }
 
     private static func newestTranscript(roots: [URL], sessionID: String) -> URL? {
@@ -201,6 +233,27 @@ final class ChatDetailStore: ObservableObject {
               let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted]),
               let text = String(data: data, encoding: .utf8) else { return String(describing: value) }
         return text
+    }
+
+    static func deduplicated(_ items: [ChatDetailItem]) -> [ChatDetailItem] {
+        var result: [ChatDetailItem] = []
+        for item in items {
+            let duplicate = result.suffix(8).contains { existing in
+                guard existing.role == item.role,
+                      existing.title == item.title,
+                      existing.body == item.body else { return false }
+                switch (existing.timestamp, item.timestamp) {
+                case let (.some(lhs), .some(rhs)):
+                    return abs(lhs.timeIntervalSince(rhs)) <= 1.5
+                case (.none, .none):
+                    return existing.id == result.last?.id
+                default:
+                    return false
+                }
+            }
+            if !duplicate { result.append(item) }
+        }
+        return result
     }
 
     private static func parseDate(_ value: Any?) -> Date? {

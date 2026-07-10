@@ -7,13 +7,45 @@ import Foundation
 enum TerminalFocuser {
     static func isFrontmost(_ target: TerminalJumpTarget) -> Bool {
         guard let frontmost = NSWorkspace.shared.frontmostApplication else { return false }
-        if let pid = target.pid, frontmost.processIdentifier == pid_t(pid) { return true }
-        if let bundleID = target.bundleID, frontmost.bundleIdentifier == bundleID { return true }
+        let pidMatches = target.pid.map { frontmost.processIdentifier == pid_t($0) } == true
+        let bundleMatches = target.bundleID.map { frontmost.bundleIdentifier == $0 } == true
         let expected = bundleID(for: normalizedAppName(target.appName))
-        if let expected, frontmost.bundleIdentifier == expected { return true }
+        let expectedBundleMatches = expected.map { frontmost.bundleIdentifier == $0 } == true
         let expectedName = normalizedAppName(target.appName)?.lowercased()
         let currentName = normalizedAppName(frontmost.localizedName)?.lowercased()
-        return expectedName != nil && expectedName == currentName
+        let nameMatches = expectedName != nil && expectedName == currentName
+        guard pidMatches || bundleMatches || expectedBundleMatches || nameMatches else { return false }
+
+        let normalizedName = normalizedAppName(target.appName ?? frontmost.localizedName)
+        if let tty = normalizedTTY(target.tty) {
+            switch normalizedName {
+            case "iTerm2":
+                return ttyMatches(currentITermTTY(), target: tty)
+            case "Terminal":
+                return ttyMatches(currentTerminalTTY(), target: tty)
+            case "WezTerm":
+                return ttyMatches(currentWezTermTTY(), target: tty)
+            default:
+                break
+            }
+        }
+        if normalizedName == "cmux", target.windowID != nil {
+            return isCmuxTargetFrontmost(target)
+        }
+        return true
+    }
+
+    static func isFrontmost(_ target: TmuxJumpTarget) -> Bool {
+        guard isFrontmost(target.terminal) else { return false }
+        guard let pane = target.pane?.trimmingCharacters(in: .whitespacesAndNewlines),
+              isValidTmuxPane(pane) else { return true }
+        guard let client = target.client, isValidTmuxClient(client),
+              let tmux = tmuxExecutableURL() else { return false }
+        let current = tmuxOutput(
+            tmux,
+            arguments: tmuxArguments(socket: target.socket, command: ["display-message", "-p", "-t", client, "#{pane_id}"])
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        return !current.isEmpty && current == pane
     }
 
     static func focus(_ target: TerminalJumpTarget) -> Bool {
@@ -347,6 +379,61 @@ enum TerminalFocuser {
         return ""
         """
         return runAppleScript(script).trimmingCharacters(in: .whitespacesAndNewlines) == "focused"
+    }
+
+    private static func currentITermTTY() -> String? {
+        let output = runAppleScript("""
+        tell application id "com.googlecode.iterm2"
+            if (count of windows) is 0 then return ""
+            return tty of current session of current window
+        end tell
+        """)
+        return normalizedTTY(output.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static func currentTerminalTTY() -> String? {
+        let output = runAppleScript("""
+        tell application id "com.apple.Terminal"
+            if (count of windows) is 0 then return ""
+            return tty of selected tab of front window
+        end tell
+        """)
+        return normalizedTTY(output.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static func currentWezTermTTY() -> String? {
+        guard let cli = wezTermCLIURL() else { return nil }
+        for environment in wezTermEnvironments() {
+            let output = processOutput(cli, arguments: ["cli", "list", "--format", "json"], environment: environment)
+            guard let data = output.data(using: .utf8),
+                  let panes = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                  let active = panes.first(where: { $0["is_active"] as? Bool == true }),
+                  let tty = active["tty_name"] as? String else { continue }
+            return normalizedTTY(tty)
+        }
+        return nil
+    }
+
+    private static func isCmuxTargetFrontmost(_ target: TerminalJumpTarget) -> Bool {
+        let tabID = target.windowID ?? ""
+        let terminalID = target.tabIndex ?? target.sessionIdentifier ?? ""
+        let output = runAppleScript("""
+        tell application "cmux"
+            if (count of windows) is 0 then return "false"
+            set selectedTab to selected tab of front window
+            if \(appleScriptLiteral(tabID)) is not "" and (id of selectedTab as text) is not \(appleScriptLiteral(tabID)) then return "false"
+            if \(appleScriptLiteral(terminalID)) is not "" then
+                if (id of focused terminal of selectedTab as text) is not \(appleScriptLiteral(terminalID)) then return "false"
+            end if
+            return "true"
+        end tell
+        """)
+        return output.trimmingCharacters(in: .whitespacesAndNewlines) == "true"
+    }
+
+    private static func ttyMatches(_ current: String?, target: String) -> Bool {
+        guard let current else { return false }
+        return current == target || current.components(separatedBy: "/").last == target.components(separatedBy: "/").last
     }
 
     private static func focusByBundleOrName(_ target: TerminalJumpTarget) -> Bool {

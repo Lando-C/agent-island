@@ -91,7 +91,7 @@ SOFTWARE.
 
 - Repository: https://github.com/erha19/ping-island
 - License: Apache-2.0
-- Copyright notice in the upstream license: Copyright 2025 Farouq Aldori
+- Copyright: Copyright 2026 Ping Island contributors
 - Adapted portions:
   - persistent Codex app-server/broker JSON-RPC response routing
   - `item/tool/requestUserInput` answer payload shape
@@ -99,6 +99,17 @@ SOFTWARE.
 
 The upstream Apache-2.0 license is available at:
 https://github.com/erha19/ping-island/blob/main/LICENSE
+
+Upstream NOTICE preserved for the adapted portions:
+
+```text
+Ping Island
+Copyright 2026 Ping Island contributors
+
+Ping Island is an independent project. It draws inspiration from
+claude-island by Farouq Aldori, but it is not a full fork or a verbatim
+derivative of that project.
+```
 
 ## Vibe Notch
 

@@ -299,6 +299,7 @@ The product direction is documented in:
 - [`docs/PRODUCT_BLUEPRINT.md`](docs/PRODUCT_BLUEPRINT.md)
 - [`docs/CODEBASE_INTEGRATION_MATRIX.md`](docs/CODEBASE_INTEGRATION_MATRIX.md)
 - [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md)
+- [`docs/ENGINEERING_REVIEW_2026-07-10.md`](docs/ENGINEERING_REVIEW_2026-07-10.md)
 - [`research/feature-coverage-matrix.md`](research/feature-coverage-matrix.md)
 
 Next priority is not a UI rewrite. The next product work should be:

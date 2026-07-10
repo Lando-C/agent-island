@@ -268,7 +268,8 @@ final class CodexBrokerClient {
                 prompt: prompt,
                 options: options,
                 multiSelect: item["multiSelect"] as? Bool ?? false,
-                isSecret: item["isSecret"] as? Bool ?? false
+                isSecret: item["isSecret"] as? Bool ?? false,
+                allowsOther: item["isOther"] as? Bool
             )
         }
     }

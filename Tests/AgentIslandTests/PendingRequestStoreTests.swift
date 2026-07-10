@@ -50,7 +50,8 @@ private func claudeQuestionFixture() -> PendingRequest {
         prompt: "Which framework?",
         options: ["React", "Vue"],
         multiSelect: false,
-        isSecret: false
+        isSecret: false,
+        allowsOther: true
     )
     return store.upsert(socketRequest: HookSocketRequest(
         type: "hook_request",
@@ -106,6 +107,16 @@ private func codexQuestionResponseIsValid() -> Bool {
     return framework["answers"] == ["SwiftUI"] && targets["answers"] == ["macOS", "Linux"]
 }
 
+private func pendingDecisionIsDeliveredOnce() -> Bool {
+    let fixture = pendingStoreFixture()
+    guard let request = fixture.store.requests.first else { return false }
+    var decisions = 0
+    fixture.store.addDecisionHandler { _, _ in decisions += 1 }
+    fixture.store.allow(request)
+    fixture.store.allow(request)
+    return decisions == 1 && fixture.store.requests.first?.status == .allowed
+}
+
 #if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Pending request store")
 struct PendingRequestStoreTests {
@@ -131,6 +142,12 @@ struct PendingRequestStoreTests {
     func codexRequestUserInputResponse() {
         #expect(codexQuestionResponseIsValid())
     }
+
+
+    @Test("A pending request is delivered only once")
+    func pendingDecisionDeliveredOnce() {
+        #expect(pendingDecisionIsDeliveredOnce())
+    }
 }
 #elseif canImport(XCTest)
 final class PendingRequestStoreTests: XCTestCase {
@@ -153,6 +170,11 @@ final class PendingRequestStoreTests: XCTestCase {
 
     func testCodexRequestUserInputResponseGroupsAnswers() {
         XCTAssertTrue(codexQuestionResponseIsValid())
+    }
+
+
+    func testPendingDecisionIsDeliveredOnlyOnce() {
+        XCTAssertTrue(pendingDecisionIsDeliveredOnce())
     }
 }
 #endif

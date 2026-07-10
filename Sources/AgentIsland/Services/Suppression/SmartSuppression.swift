@@ -24,7 +24,7 @@ enum SmartSuppression {
             case .terminal(let terminal):
                 return TerminalFocuser.isFrontmost(terminal)
             case .tmux(let tmux):
-                return TerminalFocuser.isFrontmost(tmux.terminal)
+                return TerminalFocuser.isFrontmost(tmux)
             case .process(let pid):
                 return frontmost.processIdentifier == pid_t(pid)
             case .claudeApp:
@@ -35,7 +35,7 @@ enum SmartSuppression {
             case .app(let bundleID, _):
                 return frontmost.bundleIdentifier == bundleID
             case .chatGPTWeb:
-                return isBrowser(frontmost)
+                return isChatGPTFrontmostBrowser(frontmost)
             }
         }
 
@@ -56,12 +56,40 @@ enum SmartSuppression {
             || app.localizedName?.lowercased().contains("codex") == true
     }
 
-    private static func isBrowser(_ app: NSRunningApplication) -> Bool {
+    private static func isChatGPTFrontmostBrowser(_ app: NSRunningApplication) -> Bool {
         let bundle = app.bundleIdentifier?.lowercased() ?? ""
-        return bundle.contains("safari")
-            || bundle.contains("chrome")
-            || bundle.contains("firefox")
-            || bundle.contains("arc")
-            || bundle.contains("edge")
+        let script: String
+        if bundle.contains("safari") {
+            script = """
+            tell application id "com.apple.Safari"
+                if (count of windows) is 0 then return ""
+                return (name of current tab of front window) & linefeed & (URL of current tab of front window)
+            end tell
+            """
+        } else if bundle.contains("chrome") || bundle.contains("arc") || bundle.contains("edge") {
+            guard let bundleID = app.bundleIdentifier else { return false }
+            script = """
+            tell application id "\(bundleID)"
+                if (count of windows) is 0 then return ""
+                return (title of active tab of front window) & linefeed & (URL of active tab of front window)
+            end tell
+            """
+        } else {
+            return false
+        }
+        var error: NSDictionary?
+        let value = NSAppleScript(source: script)?
+            .executeAndReturnError(&error)
+            .stringValue?
+            .lowercased() ?? ""
+        guard error == nil else { return false }
+        return isChatGPTPage(value)
+    }
+
+    static func isChatGPTPage(_ titleAndURL: String) -> Bool {
+        let value = titleAndURL.lowercased()
+        return value.contains("chatgpt.com")
+            || value.contains("chat.openai.com")
+            || value.split(separator: "\n").first?.contains("chatgpt") == true
     }
 }

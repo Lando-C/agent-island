@@ -3889,6 +3889,7 @@ struct PendingRequestCard: View {
     @State private var hovering = false
     @State private var selectedAnswers: [String: [String]] = [:]
     @State private var freeTextAnswers: [String: String] = [:]
+    @State private var customAnswerQuestionIDs: Set<String> = []
 
     var body: some View {
         HStack(spacing: 10) {
@@ -3999,20 +4000,24 @@ struct PendingRequestCard: View {
                 }
             } else {
                 optionButtons(for: question, submitsImmediately: !question.multiSelect)
-                if question.multiSelect {
+                if customAnswerQuestionIDs.contains(question.id) {
+                    freeTextField(for: question)
+                }
+                if question.multiSelect || customAnswerQuestionIDs.contains(question.id) {
                     submitAnswersButton
                 }
             }
         } else {
             VStack(alignment: .leading, spacing: 5) {
-                ForEach(questions.prefix(3)) { question in
+                ForEach(questions) { question in
                     Text(question.header ?? question.prompt)
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Color.white.opacity(0.68))
                         .lineLimit(1)
-                    if question.options.isEmpty {
+                    if question.options.isEmpty || customAnswerQuestionIDs.contains(question.id) {
                         freeTextField(for: question)
-                    } else {
+                    }
+                    if !question.options.isEmpty {
                         optionButtons(for: question, submitsImmediately: false)
                     }
                 }
@@ -4030,30 +4035,48 @@ struct PendingRequestCard: View {
             prompt: prompt,
             options: request.options,
             multiSelect: false,
-            isSecret: false
+            isSecret: false,
+            allowsOther: false
         )]
     }
 
     private func optionButtons(for question: PendingQuestion, submitsImmediately: Bool) -> some View {
-        HStack(spacing: 4) {
-            ForEach(Array(question.options.prefix(4)), id: \.self) { option in
-                Button {
-                    select(option, for: question)
-                    if submitsImmediately { onAnswer([question.id: [option]]) }
-                } label: {
-                    Text(option)
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.84))
-                        .lineLimit(1)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 3)
-                        .background(
-                            (selectedAnswers[question.id]?.contains(option) == true ? Color.cyan.opacity(0.28) : Color.white.opacity(0.08)),
-                            in: Capsule()
-                        )
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 4) {
+                ForEach(question.options, id: \.self) { option in
+                    Button {
+                        customAnswerQuestionIDs.remove(question.id)
+                        select(option, for: question)
+                        if submitsImmediately { onAnswer([question.id: [option]]) }
+                    } label: {
+                        Text(option)
+                            .font(.system(size: 9, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.84))
+                            .lineLimit(1)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(
+                                (selectedAnswers[question.id]?.contains(option) == true ? Color.cyan.opacity(0.28) : Color.white.opacity(0.08)),
+                                in: Capsule()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(submitsImmediately ? "直接提交该选项" : "选择该选项")
                 }
-                .buttonStyle(.plain)
-                .help(submitsImmediately ? "直接提交该选项" : "选择该选项")
+                if question.allowsOther == true {
+                    Button {
+                        customAnswerQuestionIDs.insert(question.id)
+                        selectedAnswers[question.id] = []
+                    } label: {
+                        Label("其他", systemImage: "pencil")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.white.opacity(0.08), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("输入自定义回答")
+                }
             }
         }
     }

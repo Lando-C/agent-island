@@ -30,6 +30,7 @@ struct PendingQuestion: Codable, Equatable, Identifiable {
     var options: [String]
     var multiSelect: Bool
     var isSecret: Bool
+    var allowsOther: Bool?
 }
 
 struct PendingRequest: Identifiable, Equatable {
@@ -255,6 +256,7 @@ final class PendingRequestStore: ObservableObject {
     }
 
     func answer(_ request: PendingRequest, answers: [String: [String]]) {
+        guard !answers.isEmpty, answers.values.allSatisfy({ !$0.isEmpty }) else { return }
         decide(request, decision: .answer(answers), status: .answered, message: "已回复")
     }
 
@@ -294,6 +296,7 @@ final class PendingRequestStore: ObservableObject {
         status: PendingRequestStatus,
         message: String
     ) {
+        guard let current = requests.first(where: { $0.id == request.id }), current.status == .pending else { return }
         update(id: request.id, status: status, message: message)
         decisionHandlers.forEach { $0(request, decision) }
     }

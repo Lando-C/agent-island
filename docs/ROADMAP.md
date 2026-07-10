@@ -16,6 +16,14 @@ Done:
   disappear when no session row can be matched.
 - Focused-island `Command-Y` / `Command-N` shortcuts for the first inline
   approval request.
+- Installed capability is represented as `available`, separately from online,
+  idle, and active work.
+- Time-based stale-session convergence: done 10 minutes, idle/available 1 hour,
+  waiting/error 12 hours.
+- Production Swift regression tests for session retention and render-safe
+  pending-request lookup.
+- Incremental JSONL event ingestion, bounded log-pruning headroom, semantic
+  snapshot publication, and low-frequency activity motion.
 
 Remaining:
 
@@ -23,8 +31,9 @@ Remaining:
 - Direct inline answer write-back for `request_user_input` once response schemas
   are verified. Current question cards show/copy options but do not claim to
   submit them.
-- Old idle/waiting session pruning.
 - Zombie detection for pid, process tree, terminal, and tmux pane liveness.
+- Transcript-aware fallback and process-aware expiry beyond the current
+  time-based retention policy.
 
 ## P1: Return to Work
 

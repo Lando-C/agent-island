@@ -17,8 +17,9 @@ Build and validate:
 
 ```bash
 swift build
+scripts/test-swift
 python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe
-bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install-hooks scripts/agent-island-event
+bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install-hooks scripts/agent-island-event scripts/test-swift
 scripts/validate-session-reducer
 scripts/validate-expansion-controller
 scripts/validate-codex-broker-probe
@@ -52,6 +53,7 @@ Reference projects are documented in `docs/CODEBASE_INTEGRATION_MATRIX.md`.
 ## Pull Request Checklist
 
 - `swift build` passes.
+- Production Swift tests pass through `scripts/test-swift`.
 - Python and shell validation pass.
 - Existing reducer/expansion tests pass.
 - User-facing docs are updated when behavior changes.

@@ -600,3 +600,59 @@
 - 当前产品属于 internal alpha，全部需求综合覆盖约 40%。
 - 当前首要缺口仍是旧会话/僵尸状态、availability 与 activity 分层、多窗口会话身份、精准跳转和真实 Swift/UI 测试。
 - 本机诊断为 `PASS=19 WARN=14 FAIL=0`；WARN 主要是可选终端能力和当前未运行的应用。
+
+## 2026-07-10 Iteration 14 - State trust and production Swift tests
+
+目标：
+
+- 修复“已安装就显示在线”的状态语义错误。
+- 让超过 12 小时没有活动的等待/异常事件退出面板，避免旧测试或死会话持续显示“需要处理”。
+- 用真正执行生产 Swift reducer/store 的测试保护状态可信度和上一轮 render-loop 修复。
+
+改动：
+
+- `AgentPhase` 新增 `available`，中文显示为“已安装”。
+- Codex CLI、Claude CLI、Claude Science Runtime 只有可执行文件但没有运行信号时使用 `available`，不再使用 `online`。
+- 收起态活动摘要排除 `available`，已安装能力只在展开列表中作为低优先级信息展示。
+- 新增共享 `SessionRetentionPolicy`：
+  - working 30 分钟
+  - thinking 90 秒
+  - queued / done 10 分钟
+  - idle / online / available 1 小时
+  - needs attention / error 12 小时
+- 新增 SwiftPM `AgentIslandTests` 和 `scripts/test-swift`，兼容只有 Command Line Tools 与完整 Xcode 的开发环境。
+- CI、贡献指南和 PR checklist 已接入生产 Swift 测试。
+- Hook 事件日志改为按 size/mtime 判定，并对普通追加只读取新增字节；截断、轮转或缺失时才重建缓存。
+- 已解析事件和去重 key 增量维护，未变化时不再重复归一化 1200 条事件。
+- Bridge 日志超过 2000 行时裁到 1500 行，留下追加缓冲区，避免每个 Hook 都重写整份 JSONL。
+- process、Claude tasks、Codex goals、Claude Science、Codex broker、ChatGPT 和磁盘会话索引按变化频率分层节流。
+- snapshot 只有语义字段变化时立即发布；纯时间戳变化最多 10 秒发布一次。
+- 根视图和工作波形移除 `repeatForever` 60 fps 动画，改为低频状态动效并遵循 Reduce Motion。
+
+生产回归覆盖：
+
+- 等待审批在 12 小时内仍可见。
+- 等待审批超过 12 小时后被清理。
+- 同一会话的新工作事件会清除更早的需处理状态。
+- `available` 与 `online` 语义、排序保持分离。
+- `PendingRequestStore.request(for:)` 在 SwiftUI 渲染查询期间不会发布 `objectWillChange`。
+- JSONL 多条完整记录和跨 chunk 半条记录均正确解码。
+- snapshot 仅时间戳变化时判定为 display-equivalent，真实 detail/phase 变化仍会触发发布。
+
+验证：
+
+- `scripts/test-swift`：8 个测试、3 个 suite 全部通过。
+- `swift build` 通过。
+- Python 与 Shell 入口语法检查通过。
+- `validate-session-reducer` 与 `validate-expansion-controller` 全部通过。
+- `validate-codex-broker-probe` 因本机当前无 broker socket 正常跳过。
+- 安装版真实 UI 展开/收起正常，Codex CLI 与 Claude Science Runtime 显示“已安装”而非“在线”。
+- 持续 CPU 从最初 40–90% 降至活跃任务场景 45 秒平均约 8.5%；主线程采样 97% 以上时间休眠。
+- 安装版诊断：`PASS=19 WARN=14 FAIL=0`。
+
+工程反思：
+
+- availability、liveness、activity 是三种不同事实，不能继续压成一个“在线”标签。
+- 12 小时 TTL 能清理陈旧状态，但不能证明进程是否仍活着；下一轮仍要用 pid、terminal 和 tmux liveness 做主判据。
+- 测试必须直接执行生产 reducer/store，Python 镜像验证只能作为协议补充，不能替代 Swift 回归。
+- 常驻工具的动效应表达状态而不是占满刷新率；fallback 探针也必须按信号变化频率分层，而不是共用一个高频轮询周期。

@@ -785,13 +785,15 @@ def write_event(source: str, phase: str, title: str, message: str, payload: dict
     return frame
 
 
-def prune_events(max_lines: int = 2000) -> None:
+def prune_events(max_lines: int = 2000, retain_lines: int = 1500) -> None:
     try:
         if EVENTS_PATH.stat().st_size < 1_000_000:
             return
         lines = EVENTS_PATH.read_text(encoding="utf-8").splitlines()
         if len(lines) > max_lines:
-            EVENTS_PATH.write_text("\n".join(lines[-max_lines:]) + "\n", encoding="utf-8")
+            # Leave headroom so an active session does not rewrite the whole
+            # event log after every single hook event.
+            EVENTS_PATH.write_text("\n".join(lines[-retain_lines:]) + "\n", encoding="utf-8")
     except Exception as exc:
         log(f"event prune failed: {exc}")
 

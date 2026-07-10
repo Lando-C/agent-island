@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Ling
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+developer_dir="$(xcode-select -p 2>/dev/null || true)"
+if [[ "$developer_dir" == "/Library/Developer/CommandLineTools" ]]; then
+  framework_root="$developer_dir/Library/Developer/Frameworks"
+  exec swift test \
+    -Xswiftc -F -Xswiftc "$framework_root" \
+    -Xlinker -F -Xlinker "$framework_root" \
+    -Xlinker -rpath -Xlinker "$framework_root"
+fi
+
+exec swift test

@@ -20,11 +20,14 @@ jobs:
       - name: Swift build
         run: swift build
 
+      - name: Swift production tests
+        run: scripts/test-swift
+
       - name: Python syntax
         run: python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe
 
       - name: Shell syntax
-        run: bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install-hooks scripts/agent-island-event
+        run: bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install-hooks scripts/agent-island-event scripts/test-swift
 
       - name: Reducer validation
         run: scripts/validate-session-reducer

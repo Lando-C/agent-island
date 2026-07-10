@@ -18,6 +18,8 @@ The goal is not to show that an app is online. The goal is to answer:
 
 - Notch-style floating panel with collapsed and expanded states.
 - Separate surfaces for App, CLI, Runtime, and Web.
+- Separate `available` (installed) from `online`, `idle`, and active work, so an
+  installed CLI is not presented as a running session.
 - Hook-driven session state for Claude Code and Codex CLI.
 - Codex app thread probing and `codex://threads/{threadId}` jump targets.
 - Claude Science app/runtime detection.
@@ -42,6 +44,14 @@ The goal is not to show that an app is online. The goal is to answer:
   - Claude Code: `~/.claude/settings.json`
   - Codex CLI: `~/.codex/hooks.json` and `~/.codex/config.toml`
 - Pending request store and local hook socket for human handoff.
+- Stale session convergence: completed work expires after 10 minutes, idle
+  capability rows after 1 hour, and inactive waiting/error events after 12
+  hours. Process-aware zombie detection remains on the roadmap.
+- Incremental Hook-log ingestion and throttled fallback probes keep status
+  transitions responsive without continuously reparsing the full event and
+  conversation history.
+- Low-frequency activity motion preserves visible working feedback without
+  permanent 60 fps redraws, and respects macOS Reduce Motion.
 - In-island allow/deny for Claude Code `PermissionRequest` hooks.
 - `request_user_input` / elicitation events are captured as structured pending
   requests. Questions and choices are visible in the island and can be copied
@@ -56,6 +66,7 @@ The goal is not to show that an app is online. The goal is to answer:
 git clone https://github.com/Lando-C/agent-island.git
 cd agent-island
 swift build
+scripts/test-swift
 scripts/build-app
 open "dist/Agent Island.app"
 ```
@@ -200,7 +211,8 @@ Next priority is not a UI rewrite. The next product work should be:
    write-back.
 2. More exact terminal focusing for Warp, Ghostty, WezTerm, kitty, cmux, and Kaku.
 3. Hook-driven chat history and tool details.
-4. Zombie detection and old-session pruning.
+4. Process-aware zombie detection and transcript fallback beyond the existing
+   time-based stale-session pruning.
 5. Smart suppression when the exact target session is already frontmost.
 6. Release packaging, signing/notarization plan, and Homebrew cask.
 7. Off-island floating mode, mascot, and sound once the status/jump core is

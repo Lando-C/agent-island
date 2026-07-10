@@ -3,8 +3,9 @@
 ## Validation
 
 - [ ] `swift build`
+- [ ] `scripts/test-swift`
 - [ ] `python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe`
-- [ ] `bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install-hooks scripts/agent-island-event`
+- [ ] `bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install-hooks scripts/agent-island-event scripts/test-swift`
 - [ ] `scripts/validate-session-reducer`
 - [ ] `scripts/validate-expansion-controller`
 - [ ] `scripts/validate-codex-broker-probe`

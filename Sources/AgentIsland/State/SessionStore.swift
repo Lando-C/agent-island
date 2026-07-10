@@ -43,6 +43,25 @@ enum SessionPhase {
     }
 }
 
+enum SessionRetentionPolicy {
+    static func maxAge(for phase: AgentPhase) -> TimeInterval {
+        switch phase {
+        case .working:
+            return 30 * 60
+        case .thinking:
+            return 90
+        case .queued:
+            return 10 * 60
+        case .needsAttention, .error:
+            return 12 * 60 * 60
+        case .done:
+            return 10 * 60
+        case .online, .idle, .available, .offline:
+            return 60 * 60
+        }
+    }
+}
+
 struct AgentSessionStore {
     private struct SessionAccumulator {
         var family: AgentFamily
@@ -141,7 +160,7 @@ struct AgentSessionStore {
                 terminalEvent = resolved.event
                 terminalPhase = .completed
                 terminalTs = resolved.ts
-            case .thinking, .online, .idle, .offline:
+            case .thinking, .online, .idle, .available, .offline:
                 break
             }
         }
@@ -181,7 +200,7 @@ struct AgentSessionStore {
             guard let latestEvent else { return nil }
 
             let phaseInfo = currentPhase(now: now)
-            guard now - phaseInfo.ts <= maxAge(for: phaseInfo.phase) else { return nil }
+            guard now - phaseInfo.ts <= SessionRetentionPolicy.maxAge(for: phaseInfo.phase) else { return nil }
 
             var rollup = AgentEventRollup(
                 family: family,
@@ -205,7 +224,8 @@ struct AgentSessionStore {
         }
 
         private func currentPhase(now: Double) -> (phase: AgentPhase, event: AgentEvent, ts: Double) {
-            if let pendingAttentionEvent, now - pendingAttentionTs <= maxAge(for: pendingAttentionKind.agentPhase) {
+            if let pendingAttentionEvent,
+               now - pendingAttentionTs <= SessionRetentionPolicy.maxAge(for: pendingAttentionKind.agentPhase) {
                 return (pendingAttentionKind.agentPhase, pendingAttentionEvent, pendingAttentionTs)
             }
 
@@ -213,36 +233,24 @@ struct AgentSessionStore {
                 return (.working, lastActiveEvent ?? event, lastActiveTs > 0 ? lastActiveTs : lastToolTs)
             }
 
-            if let terminalEvent, let terminalPhase, now - terminalTs <= maxAge(for: terminalPhase.agentPhase) {
+            if let terminalEvent,
+               let terminalPhase,
+               now - terminalTs <= SessionRetentionPolicy.maxAge(for: terminalPhase.agentPhase) {
                 return (terminalPhase.agentPhase, terminalEvent, terminalTs)
             }
 
-            if let event = lastToolEvent, lastToolHookEvent == "posttooluse", now - lastToolTs <= maxAge(for: .thinking) {
+            if let event = lastToolEvent,
+               lastToolHookEvent == "posttooluse",
+               now - lastToolTs <= SessionRetentionPolicy.maxAge(for: .thinking) {
                 return (.thinking, event, lastToolTs)
             }
 
-            if let queuedEvent, now - queuedTs <= maxAge(for: .queued) {
+            if let queuedEvent,
+               now - queuedTs <= SessionRetentionPolicy.maxAge(for: .queued) {
                 return (.queued, queuedEvent, queuedTs)
             }
 
             return (.idle, latestEvent ?? terminalEvent ?? queuedEvent ?? lastToolEvent!, latestTs)
-        }
-
-        private func maxAge(for phase: AgentPhase) -> TimeInterval {
-            switch phase {
-            case .working:
-                return 30 * 60
-            case .thinking:
-                return 90
-            case .queued:
-                return 10 * 60
-            case .needsAttention, .error:
-                return 24 * 60 * 60
-            case .done:
-                return 10 * 60
-            case .online, .idle, .offline:
-                return 60 * 60
-            }
         }
     }
 

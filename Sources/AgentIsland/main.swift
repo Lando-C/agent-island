@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import AppKit
+import Combine
 import Foundation
 import SwiftUI
 
@@ -81,6 +82,7 @@ enum AgentPhase: String, Codable {
     case error
     case online
     case idle
+    case available
     case offline
 
     var label: String {
@@ -93,6 +95,7 @@ enum AgentPhase: String, Codable {
         case .error: return "异常"
         case .online: return "在线"
         case .idle: return "待命"
+        case .available: return "已安装"
         case .offline: return "离线"
         }
     }
@@ -107,7 +110,8 @@ enum AgentPhase: String, Codable {
         case .done: return 5
         case .online: return 6
         case .idle: return 7
-        case .offline: return 8
+        case .available: return 8
+        case .offline: return 9
         }
     }
 
@@ -121,6 +125,7 @@ enum AgentPhase: String, Codable {
         case .error: return "exclamationmark"
         case .online: return "power"
         case .idle: return "pause"
+        case .available: return "shippingbox"
         case .offline: return "minus"
         }
     }
@@ -162,9 +167,17 @@ struct AgentSnapshot: Identifiable, Equatable {
         switch phase {
         case .needsAttention, .queued, .done, .error:
             return true
-        case .working, .thinking, .online, .idle, .offline:
+        case .working, .thinking, .online, .idle, .available, .offline:
             return false
         }
+    }
+
+    func isDisplayEquivalent(to other: AgentSnapshot) -> Bool {
+        var lhs = self
+        var rhs = other
+        lhs.lastUpdated = nil
+        rhs.lastUpdated = nil
+        return lhs == rhs
     }
 
     static func empty(_ family: AgentFamily, _ surface: AgentSurface) -> AgentSnapshot {
@@ -249,6 +262,28 @@ struct AgentEvent: Decodable {
     }
 }
 
+enum AgentEventLogDecoder {
+    static func decodeChunk(_ text: String) -> (events: [AgentEvent], fragment: String) {
+        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let fragment: String
+        if text.hasSuffix("\n") {
+            fragment = ""
+        } else {
+            fragment = lines.popLast().map(String.init) ?? ""
+        }
+
+        let decoder = JSONDecoder()
+        let events = lines.compactMap { line -> AgentEvent? in
+            guard !line.isEmpty,
+                  let data = String(line).data(using: .utf8) else {
+                return nil
+            }
+            return try? decoder.decode(AgentEvent.self, from: data)
+        }
+        return (events, fragment)
+    }
+}
+
 struct ConversationInfo {
     var title: String
     var workspace: String?
@@ -293,7 +328,7 @@ struct AgentEventRollup {
             queuedCount += 1
         case .done:
             doneCount += 1
-        case .online, .idle, .offline:
+        case .online, .idle, .available, .offline:
             break
         }
 
@@ -1001,16 +1036,36 @@ final class AgentMonitor: ObservableObject {
         .empty(.chatgpt, .app),
         .empty(.chatgpt, .web)
     ]
-    @Published var lastRefresh = Date()
-
     private var timer: Timer?
     private var isRefreshing = false
+    private var lastSnapshotPublish = Date.distantPast
     private let home = FileManager.default.homeDirectoryForCurrentUser
     private var cachedCodexBrokerThreads: [CodexBrokerThread] = []
     private var lastCodexBrokerScan = Date.distantPast
     private var lastCodexBrokerSuccess = Date.distantPast
     private var cachedChatGPTSummary = ChatGPTSummary()
     private var lastChatGPTScan = Date.distantPast
+    private var cachedProcessRows: [ProcessRow] = []
+    private var lastProcessScan = Date.distantPast
+    private var lastProcessScanSuccess = Date.distantPast
+    private var cachedClaudeTaskSummary = ClaudeTaskSummary()
+    private var lastClaudeTaskScan = Date.distantPast
+    private var cachedCodexGoalSummary = CodexGoalSummary()
+    private var lastCodexGoalScan = Date.distantPast
+    private var cachedClaudeScienceSummary = ClaudeScienceSummary()
+    private var lastClaudeScienceScan = Date.distantPast
+    private var cachedDiskConversationInfo: [String: ConversationInfo] = [:]
+    private var lastDiskConversationScan = Date.distantPast
+    private var cachedRecentEvents: [AgentEvent] = []
+    private var cachedEventLogSize: UInt64?
+    private var cachedEventLogModificationDate: Date?
+    private var cachedEventLogFragment = ""
+    private var eventLogGeneration = 0
+    private var cachedResolvedEvents: [ResolvedAgentEvent] = []
+    private var cachedResolvedEventKeys: Set<String> = []
+    private var cachedResolvedEventGeneration = -1
+    private var pendingEventCacheEvents: [AgentEvent] = []
+    private var eventCacheRequiresFullResolution = true
     private var chatGPTAppWasWorking = false
     private var chatGPTWebWasWorking = false
     private var chatGPTAppDoneUntil: Date?
@@ -1051,7 +1106,7 @@ final class AgentMonitor: ObservableObject {
 
     func start() {
         refreshAsync()
-        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refreshAsync()
         }
     }
@@ -1064,21 +1119,28 @@ final class AgentMonitor: ObservableObject {
             guard let self else { return }
             let next = self.collectSnapshots()
             DispatchQueue.main.async {
-                self.snapshots = next
-                self.lastRefresh = Date()
+                let now = Date()
+                let displayChanged = self.snapshots.count != next.count
+                    || !zip(self.snapshots, next).allSatisfy { current, incoming in
+                        current.isDisplayEquivalent(to: incoming)
+                    }
+                if displayChanged || now.timeIntervalSince(self.lastSnapshotPublish) >= 10 {
+                    self.snapshots = next
+                    self.lastSnapshotPublish = now
+                }
                 self.isRefreshing = false
             }
         }
     }
 
     private func collectSnapshots() -> [AgentSnapshot] {
-        let rows = readProcesses()
+        let rows = readProcessesCached()
         let events = eventRollups(rows: rows)
-        let claudeTasks = readClaudeTaskSummary()
-        let codexGoals = readCodexGoalSummary()
+        let claudeTasks = readClaudeTaskSummaryCached()
+        let codexGoals = readCodexGoalSummaryCached()
         let codexBrokerThreads = readCodexBrokerThreads()
         let codexBroker = summarizeCodexBrokerThreads(codexBrokerThreads)
-        let science = readClaudeScienceSummary(rows: rows)
+        let science = readClaudeScienceSummaryCached(rows: rows)
         let chatGPT = readChatGPTSummary(rows: rows)
         let claudeAppOwnsTasks = !claudeAppRows(from: rows).isEmpty
         let conversations = readConversationInfo(codexBrokerThreads: codexBrokerThreads)
@@ -1151,6 +1213,22 @@ final class AgentMonitor: ObservableObject {
         }
     }
 
+    private func readProcessesCached() -> [ProcessRow] {
+        let now = Date()
+        if now.timeIntervalSince(lastProcessScan) < 4 {
+            return cachedProcessRows
+        }
+        lastProcessScan = now
+        let rows = readProcesses()
+        if !rows.isEmpty {
+            cachedProcessRows = rows
+            lastProcessScanSuccess = now
+        } else if now.timeIntervalSince(lastProcessScanSuccess) >= 15 {
+            cachedProcessRows = []
+        }
+        return cachedProcessRows
+    }
+
     private func makeCodexApp(rows: [ProcessRow], goals: CodexGoalSummary, broker: CodexBrokerSummary) -> AgentSnapshot {
         let appRows = rows.filter { row in
             isCodexAppProcess(row.command)
@@ -1218,7 +1296,7 @@ final class AgentMonitor: ObservableObject {
             snapshot.pidCount = cliRows.count
             snapshot.lastUpdated = Date()
         } else if executableExists("codex") {
-            snapshot.phase = .online
+            snapshot.phase = .available
             snapshot.detail = "CLI 已安装，未检测到任务事件"
         }
         return snapshot
@@ -1250,7 +1328,7 @@ final class AgentMonitor: ObservableObject {
             snapshot.targetPID = cliRows.first?.pid
             snapshot.pidCount = cliRows.count
         } else if executableExists("claude") {
-            snapshot.phase = .online
+            snapshot.phase = .available
             snapshot.detail = "CLI 已安装，未检测到任务事件"
         }
         if let tasks {
@@ -1378,7 +1456,7 @@ final class AgentMonitor: ObservableObject {
             snapshot.pidCount = serverRows.count + kernelRows.count
             snapshot.lastUpdated = Date()
         } else if FileManager.default.isExecutableFile(atPath: home.appendingPathComponent(".claude-science/bin/claude-science").path) {
-            snapshot.phase = .online
+            snapshot.phase = .available
             snapshot.detail = "CLI 已安装，后台服务未运行"
         }
 
@@ -1453,12 +1531,13 @@ final class AgentMonitor: ObservableObject {
 
     private func readChatGPTSummary(rows: [ProcessRow]) -> ChatGPTSummary {
         let now = Date()
-        if now.timeIntervalSince(lastChatGPTScan) < 5 {
+        if now.timeIntervalSince(lastChatGPTScan) < 12 {
             return cachedChatGPTSummary
         }
         lastChatGPTScan = now
 
         var summary = ChatGPTSummary()
+        let frontmost = frontmostProcessName()
         let appRows = chatGPTAppRows(from: rows)
         if !appRows.isEmpty {
             summary.appPhase = .online
@@ -1467,7 +1546,7 @@ final class AgentMonitor: ObservableObject {
             summary.appPIDCount = appRows.count
             summary.appLastUpdated = now
 
-            if frontmostProcessName() == "ChatGPT" {
+            if frontmost == "ChatGPT" {
                 let text = accessibilityText(forProcess: "ChatGPT")
                 let signal = classifyChatGPTUI(text)
                 switch signal {
@@ -1491,15 +1570,13 @@ final class AgentMonitor: ObservableObject {
             }
         }
 
-        let probes = readBrowserProbes()
+        let probes = readBrowserProbes(frontmostProcessName: frontmost)
         let tabCount = probes.reduce(0) { $0 + $1.chatGPTTabCount }
         if tabCount > 0 {
             summary.webPhase = .online
             summary.webTabCount = tabCount
             summary.webPID = probes.first { $0.chatGPTTabCount > 0 }?.pid
             summary.webLastUpdated = now
-            let frontmost = frontmostProcessName()
-
             if let active = probes.first(where: { $0.activeIsChatGPT && $0.processName == frontmost }) {
                 let text = accessibilityText(forProcess: active.processName)
                 let signal = classifyChatGPTUI(text)
@@ -1566,7 +1643,7 @@ final class AgentMonitor: ObservableObject {
         }
     }
 
-    private func readBrowserProbes() -> [BrowserProbe] {
+    private func readBrowserProbes(frontmostProcessName: String?) -> [BrowserProbe] {
         let browsers = [
             ("Google Chrome", "Google Chrome", "com.google.Chrome", false),
             ("Safari", "Safari", "com.apple.Safari", true),
@@ -1580,7 +1657,9 @@ final class AgentMonitor: ObservableObject {
                 return nil
             }
             let tabs = browserTabs(appName: appName, safari: isSafari)
-            let active = activeBrowserTab(appName: appName, safari: isSafari)
+            let active = processName == frontmostProcessName
+                ? activeBrowserTab(appName: appName, safari: isSafari)
+                : (url: "", title: "")
             let count = tabs.filter { isChatGPTURL($0.url) }.count
             guard count > 0 else { return nil }
             return BrowserProbe(
@@ -1758,20 +1837,27 @@ final class AgentMonitor: ObservableObject {
     }
 
     private func readConversationInfo(codexBrokerThreads: [CodexBrokerThread]) -> [String: ConversationInfo] {
-        var result = readCodexConversationInfo()
+        let now = Date()
+        if now.timeIntervalSince(lastDiskConversationScan) >= 30 {
+            var diskResult = readCodexConversationInfo()
+            let recentSessions = recentEventSessionIDs()
+            let claude = readClaudeConversationInfo(sessionIDs: recentSessions[.claude] ?? [])
+            diskResult.merge(claude) { current, _ in current }
+            cachedDiskConversationInfo = diskResult
+            lastDiskConversationScan = now
+        }
+
+        var result = cachedDiskConversationInfo
         let broker = readCodexBrokerConversationInfo(threads: codexBrokerThreads)
         result.merge(broker) { current, incoming in
             mergeConversationInfo(current: current, incoming: incoming)
         }
-        let recentSessions = recentEventSessionIDs()
-        let claude = readClaudeConversationInfo(sessionIDs: recentSessions[.claude] ?? [])
-        result.merge(claude) { current, _ in current }
         return result
     }
 
     private func readCodexBrokerThreads() -> [CodexBrokerThread] {
         let now = Date()
-        if now.timeIntervalSince(lastCodexBrokerScan) < 6 {
+        if now.timeIntervalSince(lastCodexBrokerScan) < 8 {
             return cachedCodexBrokerThreads
         }
         lastCodexBrokerScan = now
@@ -2041,16 +2127,9 @@ final class AgentMonitor: ObservableObject {
     }
 
     private func recentEventSessionIDs() -> [AgentFamily: Set<String>] {
-        let url = home.appendingPathComponent(".agent-island/events.jsonl")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-            return [:]
-        }
-        let decoder = JSONDecoder()
         var result: [AgentFamily: Set<String>] = [:]
-        for line in text.split(separator: "\n").suffix(1200) {
-            guard let data = String(line).data(using: .utf8),
-                  let event = try? decoder.decode(AgentEvent.self, from: data),
-                  let family = normalizeFamily(event.family ?? event.agent),
+        for event in readRecentAgentEvents() {
+            guard let family = normalizeFamily(event.family ?? event.agent),
                   let session = event.session,
                   !session.isEmpty else {
                 continue
@@ -2230,62 +2309,47 @@ final class AgentMonitor: ObservableObject {
         switch phase {
         case .needsAttention, .error:
             return false
-        case .working, .thinking, .queued, .done, .online, .idle, .offline:
+        case .working, .thinking, .queued, .done, .online, .idle, .available, .offline:
             return true
         }
     }
 
     private func eventRollups(rows: [ProcessRow]) -> [String: AgentEventRollup] {
-        let url = home.appendingPathComponent(".agent-island/events.jsonl")
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-            return [:]
-        }
-        let processMap = rows.reduce(into: [Int: ProcessRow]()) { partial, row in
-            partial[row.pid] = row
-        }
-
         let now = Date().timeIntervalSince1970
-        let lines = text.split(separator: "\n").suffix(1200)
-        var resolvedEvents: [ResolvedAgentEvent] = []
-        var seenEventKeys: Set<String> = []
-        let decoder = JSONDecoder()
-
-        for line in lines {
-            guard let data = String(line).data(using: .utf8),
-                  let event = try? decoder.decode(AgentEvent.self, from: data),
-                  let family = normalizeFamily(event.family ?? event.agent),
-                  let phase = normalizeEventPhase(event) else {
-                continue
+        _ = readRecentAgentEvents()
+        if cachedResolvedEventGeneration != eventLogGeneration {
+            let processMap = rows.reduce(into: [Int: ProcessRow]()) { partial, row in
+                partial[row.pid] = row
             }
-            guard !shouldSuppressAuxiliaryEvent(event, family: family, phase: phase) else { continue }
-            let rawSurface = normalizeSurface(event.surface ?? event.channel) ?? .cli
-            let surface = resolvedSurface(
-                for: event,
-                family: family,
-                defaultSurface: rawSurface,
-                processMap: processMap
-            )
-            let ts = event.ts ?? 0
-            guard ts > 0, now - ts <= 24 * 60 * 60 else { continue }
+            let rebuild = eventCacheRequiresFullResolution
+            let events = rebuild ? cachedRecentEvents : pendingEventCacheEvents
+            if rebuild {
+                cachedResolvedEvents = []
+                cachedResolvedEventKeys = []
+            }
 
-            let session = event.session?.isEmpty == false
-                ? event.session!
-                : event.pid.map { "pid:\($0)" } ?? "global:\(family.rawValue)-\(surface.rawValue)"
-            let logicalSession = logicalSessionID(for: event, fallback: session)
-            let hookEvent = normalizeHookEventName(event)
-            let dedupeKey = [
-                family.rawValue,
-                surface.rawValue,
-                logicalSession,
-                hookEvent,
-                event.tool ?? "",
-                event.pid.map(String.init) ?? "",
-                String(Int(ts * 1000))
-            ].joined(separator: "\u{1F}")
-            guard !seenEventKeys.contains(dedupeKey) else { continue }
-            seenEventKeys.insert(dedupeKey)
-            resolvedEvents.append(
-                ResolvedAgentEvent(
+            for event in events {
+                guard let family = normalizeFamily(event.family ?? event.agent),
+                      let phase = normalizeEventPhase(event) else {
+                    continue
+                }
+                guard !shouldSuppressAuxiliaryEvent(event, family: family, phase: phase) else { continue }
+                let rawSurface = normalizeSurface(event.surface ?? event.channel) ?? .cli
+                let surface = resolvedSurface(
+                    for: event,
+                    family: family,
+                    defaultSurface: rawSurface,
+                    processMap: processMap
+                )
+                let ts = event.ts ?? 0
+                guard ts > 0, now - ts <= 24 * 60 * 60 else { continue }
+
+                let session = event.session?.isEmpty == false
+                    ? event.session!
+                    : event.pid.map { "pid:\($0)" } ?? "global:\(family.rawValue)-\(surface.rawValue)"
+                let logicalSession = logicalSessionID(for: event, fallback: session)
+                let hookEvent = normalizeHookEventName(event)
+                let resolved = ResolvedAgentEvent(
                     family: family,
                     surface: surface,
                     session: logicalSession,
@@ -2294,10 +2358,99 @@ final class AgentMonitor: ObservableObject {
                     normalizedPhase: phase,
                     ts: ts
                 )
-            )
+                let dedupeKey = resolvedEventDedupeKey(resolved)
+                guard cachedResolvedEventKeys.insert(dedupeKey).inserted else { continue }
+                cachedResolvedEvents.append(resolved)
+            }
+
+            if cachedResolvedEvents.count > 1200 {
+                cachedResolvedEvents.removeFirst(cachedResolvedEvents.count - 1200)
+                cachedResolvedEventKeys = Set(cachedResolvedEvents.map(resolvedEventDedupeKey))
+            }
+            cachedResolvedEventGeneration = eventLogGeneration
+            pendingEventCacheEvents = []
+            eventCacheRequiresFullResolution = false
         }
 
-        return AgentSessionStore.rollups(from: resolvedEvents, now: now)
+        return AgentSessionStore.rollups(from: cachedResolvedEvents, now: now)
+    }
+
+    private func resolvedEventDedupeKey(_ resolved: ResolvedAgentEvent) -> String {
+        [
+            resolved.family.rawValue,
+            resolved.surface.rawValue,
+            resolved.session,
+            resolved.hookEvent,
+            resolved.event.tool ?? "",
+            resolved.event.pid.map(String.init) ?? "",
+            String(Int(resolved.ts * 1000))
+        ].joined(separator: "\u{1F}")
+    }
+
+    private func readRecentAgentEvents() -> [AgentEvent] {
+        let url = home.appendingPathComponent(".agent-island/events.jsonl")
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let size = (attributes[.size] as? NSNumber)?.uint64Value,
+              let modificationDate = attributes[.modificationDate] as? Date else {
+            if cachedEventLogSize != nil || !cachedRecentEvents.isEmpty {
+                cachedRecentEvents = []
+                cachedEventLogSize = nil
+                cachedEventLogModificationDate = nil
+                cachedEventLogFragment = ""
+                pendingEventCacheEvents = []
+                eventCacheRequiresFullResolution = true
+                eventLogGeneration += 1
+            }
+            return []
+        }
+
+        if cachedEventLogSize == size,
+           cachedEventLogModificationDate == modificationDate {
+            return cachedRecentEvents
+        }
+
+        if let previousSize = cachedEventLogSize,
+           size > previousSize,
+           let appendedText = readEventLogText(at: url, from: previousSize) {
+            let decoded = AgentEventLogDecoder.decodeChunk(cachedEventLogFragment + appendedText)
+            let appendedEvents = Array(decoded.events.suffix(1200))
+            if !appendedEvents.isEmpty {
+                cachedRecentEvents = Array((cachedRecentEvents + appendedEvents).suffix(1200))
+                pendingEventCacheEvents = appendedEvents
+                eventCacheRequiresFullResolution = false
+                eventLogGeneration += 1
+            }
+            cachedEventLogFragment = decoded.fragment
+            cachedEventLogSize = size
+            cachedEventLogModificationDate = modificationDate
+            return cachedRecentEvents
+        }
+
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            return cachedRecentEvents
+        }
+
+        let decoded = AgentEventLogDecoder.decodeChunk(text)
+        cachedRecentEvents = Array(decoded.events.suffix(1200))
+        cachedEventLogFragment = decoded.fragment
+        cachedEventLogSize = size
+        cachedEventLogModificationDate = modificationDate
+        pendingEventCacheEvents = cachedRecentEvents
+        eventCacheRequiresFullResolution = true
+        eventLogGeneration += 1
+        return cachedRecentEvents
+    }
+
+    private func readEventLogText(at url: URL, from offset: UInt64) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        do {
+            try handle.seek(toOffset: offset)
+            guard let data = try handle.readToEnd() else { return "" }
+            return String(data: data, encoding: .utf8)
+        } catch {
+            return nil
+        }
     }
 
     private func resolvedSurface(
@@ -2495,7 +2648,7 @@ final class AgentMonitor: ObservableObject {
                 snapshot.pendingCount = 1
             case .done:
                 snapshot.completedCount = 1
-            case .thinking, .online, .idle, .offline:
+            case .thinking, .online, .idle, .available, .offline:
                 break
             }
 
@@ -2666,17 +2819,7 @@ final class AgentMonitor: ObservableObject {
     }
 
     private func eventMaxAge(for phase: AgentPhase) -> TimeInterval {
-        switch phase {
-        case .working: return 30 * 60
-        case .thinking: return 3 * 60
-        case .queued: return 30 * 60
-        case .needsAttention: return 24 * 60 * 60
-        case .done: return 10 * 60
-        case .error: return 24 * 60 * 60
-        case .online: return 60 * 60
-        case .idle: return 60 * 60
-        case .offline: return 60 * 60
-        }
+        SessionRetentionPolicy.maxAge(for: phase)
     }
 
     private func normalizeFamily(_ raw: String?) -> AgentFamily? {
@@ -2714,8 +2857,10 @@ final class AgentMonitor: ObservableObject {
             return .done
         case "error", "failed", "failure":
             return .error
-        case "online", "available":
+        case "online":
             return .online
+        case "available", "installed":
+            return .available
         case "idle":
             return .idle
         case "offline", "stopped":
@@ -2811,6 +2956,15 @@ final class AgentMonitor: ObservableObject {
         return summary
     }
 
+    private func readClaudeTaskSummaryCached() -> ClaudeTaskSummary {
+        let now = Date()
+        if now.timeIntervalSince(lastClaudeTaskScan) >= 8 {
+            cachedClaudeTaskSummary = readClaudeTaskSummary()
+            lastClaudeTaskScan = now
+        }
+        return cachedClaudeTaskSummary
+    }
+
     private func readCodexGoalSummary() -> CodexGoalSummary {
         let path = home.appendingPathComponent(".codex/sqlite/goals_1.sqlite").path
         guard FileManager.default.fileExists(atPath: path) else { return CodexGoalSummary() }
@@ -2858,6 +3012,15 @@ final class AgentMonitor: ObservableObject {
             }
         }
         return summary
+    }
+
+    private func readCodexGoalSummaryCached() -> CodexGoalSummary {
+        let now = Date()
+        if now.timeIntervalSince(lastCodexGoalScan) >= 8 {
+            cachedCodexGoalSummary = readCodexGoalSummary()
+            lastCodexGoalScan = now
+        }
+        return cachedCodexGoalSummary
     }
 
     private func readClaudeScienceSummary(rows: [ProcessRow]) -> ClaudeScienceSummary {
@@ -2924,6 +3087,15 @@ final class AgentMonitor: ObservableObject {
         }
 
         return summary
+    }
+
+    private func readClaudeScienceSummaryCached(rows: [ProcessRow]) -> ClaudeScienceSummary {
+        let now = Date()
+        if now.timeIntervalSince(lastClaudeScienceScan) >= 8 {
+            cachedClaudeScienceSummary = readClaudeScienceSummary(rows: rows)
+            lastClaudeScienceScan = now
+        }
+        return cachedClaudeScienceSummary
     }
 
     private func claudeScienceDatabasePath() -> String? {
@@ -2993,15 +3165,17 @@ final class AgentMonitor: ObservableObject {
 }
 
 struct IslandView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var monitor: AgentMonitor
     @ObservedObject var pendingRequests: PendingRequestStore
     var onExpandedChange: (Bool) -> Void = { _ in }
     var onSnapshotAction: (AgentSnapshot) -> Void = { _ in }
     @StateObject private var expansion = IslandExpansionController()
     @State private var pulse = false
-    @State private var orbit = false
+    @State private var orbitAngle = 0.0
     @State private var previousPhaseByID: [String: AgentPhase] = [:]
     @State private var copiedSnapshotID: String?
+    private let motionTicker = Timer.publish(every: 1.2, on: .main, in: .common).autoconnect()
 
     private var expanded: Bool {
         expansion.expanded
@@ -3012,7 +3186,7 @@ struct IslandView: View {
     }
 
     private var activeSnapshots: [AgentSnapshot] {
-        monitor.snapshots.filter { $0.phase != .offline }
+        monitor.snapshots.filter { $0.phase != .offline && $0.phase != .available }
     }
 
     private var displaySnapshots: [AgentSnapshot] {
@@ -3089,12 +3263,11 @@ struct IslandView: View {
         .padding(.top, 2)
         .onAppear {
             expansion.onExpandedChange = onExpandedChange
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
-                pulse = true
-            }
-            withAnimation(.linear(duration: 3.0).repeatForever(autoreverses: false)) {
-                orbit = true
-            }
+        }
+        .onReceive(motionTicker) { _ in
+            guard !reduceMotion else { return }
+            pulse.toggle()
+            orbitAngle += 45
         }
         .onChange(of: monitor.snapshots) { snapshots in
             handleSnapshotChanges(snapshots)
@@ -3161,7 +3334,7 @@ struct IslandView: View {
                                 AngularGradient(
                                     colors: [.green, .orange, .cyan, .pink, .green],
                                     center: .center,
-                                    angle: .degrees(orbit ? 360 : 0)
+                                    angle: .degrees(orbitAngle)
                                 ),
                                 lineWidth: 2
                             )
@@ -3172,6 +3345,7 @@ struct IslandView: View {
                             .fill(statusColor)
                             .frame(width: pulse && monitor.activeCount > 0 ? 12 : 9, height: pulse && monitor.activeCount > 0 ? 12 : 9)
                             .shadow(color: statusColor.opacity(0.8), radius: monitor.activeCount > 0 ? 8 : 2)
+                            .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: pulse)
                     }
 
                     VStack(alignment: .leading, spacing: 2) {
@@ -3344,7 +3518,7 @@ struct IslandView: View {
         switch snapshot.phase {
         case .needsAttention, .queued, .done, .error, .working, .thinking:
             return true
-        case .online, .idle, .offline:
+        case .online, .idle, .available, .offline:
             return false
         }
     }
@@ -3357,7 +3531,7 @@ struct IslandView: View {
             return 9
         case .queued, .working, .thinking:
             return 5
-        case .online, .idle, .offline:
+        case .online, .idle, .available, .offline:
             return 0
         }
     }
@@ -3544,6 +3718,7 @@ struct AgentRow: View {
         case .error: return .red
         case .online: return Color.white.opacity(0.62)
         case .idle: return Color.white.opacity(0.54)
+        case .available: return Color.white.opacity(0.42)
         case .offline: return Color.white.opacity(0.28)
         }
     }
@@ -3847,6 +4022,7 @@ struct SpotlightSummary: View {
         case .error: return .red
         case .online: return Color.white.opacity(0.62)
         case .idle: return Color.white.opacity(0.54)
+        case .available: return Color.white.opacity(0.42)
         case .offline: return Color.white.opacity(0.28)
         }
     }
@@ -3867,19 +4043,35 @@ struct CountBadge: View {
 }
 
 struct ActivityBars: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var color: Color
-    @State private var animate = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 3) {
+        if reduceMotion {
+            bars(tick: 0)
+        } else {
+            TimelineView(.periodic(from: .now, by: 0.32)) { context in
+                let tick = Int(context.date.timeIntervalSinceReferenceDate / 0.32)
+                bars(tick: tick)
+            }
+        }
+    }
+
+    private func bars(tick: Int) -> some View {
+        let patterns: [[CGFloat]] = [
+            [16, 7, 14, 8, 18],
+            [10, 17, 7, 15, 11],
+            [7, 12, 18, 9, 14],
+            [13, 8, 11, 17, 7]
+        ]
+        let heights = patterns[tick % patterns.count]
+        return HStack(alignment: .center, spacing: 3) {
             ForEach(0..<5, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 2, style: .continuous)
                     .fill(color.opacity(0.86))
-                    .frame(width: 4, height: animate ? CGFloat([10, 17, 7, 15, 11][index]) : CGFloat([16, 7, 14, 8, 18][index]))
-                    .animation(.easeInOut(duration: 0.52 + Double(index) * 0.08).repeatForever(autoreverses: true), value: animate)
+                    .frame(width: 4, height: heights[index])
             }
         }
-        .onAppear { animate = true }
     }
 }
 

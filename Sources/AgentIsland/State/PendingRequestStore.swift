@@ -194,7 +194,6 @@ final class PendingRequestStore: ObservableObject {
     }
 
     func request(for snapshot: AgentSnapshot) -> PendingRequest? {
-        prune(now: Date())
         if let requestID = snapshot.requestID, !requestID.isEmpty {
             let key = "\(snapshot.family.rawValue)::\(requestID)"
             if let match = requests.first(where: { $0.id == key }) {
@@ -244,9 +243,11 @@ final class PendingRequestStore: ObservableObject {
     }
 
     func prune(now: Date) {
-        requests.removeAll { request in
-            request.status != .pending && now.timeIntervalSince(request.updatedAt) > retention
+        let retained = requests.filter { request in
+            !(request.status != .pending && now.timeIntervalSince(request.updatedAt) > retention)
         }
+        guard retained.count != requests.count else { return }
+        requests = retained
     }
 
     private func decide(

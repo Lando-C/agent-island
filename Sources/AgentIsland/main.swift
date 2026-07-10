@@ -3995,6 +3995,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var globalKeyMonitor: Any?
     private var didStart = false
     private var isExpanded = false
+    private var panelPositionGeneration = 0
 
     private var dataRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agent-island")
@@ -4240,14 +4241,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let panel, let screen = NSScreen.main else { return }
         let size = IslandPanelSizing.size(expanded: isExpanded, on: screen)
         let frame = NotchPlacement.frame(for: size, on: screen)
-        panel.setFrame(frame, display: true, animate: animate)
-        islandLog("position display=\(screen.displayId) notched=\(NotchPlacement.hasNotch(on: screen)) screen=\(screen.frame) visible=\(screen.visibleFrame) panel=\(panel.frame)")
+        if animate {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.allowsImplicitAnimation = true
+                panel.animator().setFrame(frame, display: true)
+            }
+        } else {
+            panel.setFrame(frame, display: true)
+        }
+        islandLog("position display=\(screen.displayId) notched=\(NotchPlacement.hasNotch(on: screen)) screen=\(screen.frame) visible=\(screen.visibleFrame) target=\(frame)")
+    }
+
+    private func schedulePanelPosition(animate: Bool) {
+        panelPositionGeneration &+= 1
+        let generation = panelPositionGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.panelPositionGeneration == generation else { return }
+            self.positionPanel(animate: animate)
+        }
     }
 
     private func setExpanded(_ expanded: Bool) {
         guard isExpanded != expanded else { return }
         isExpanded = expanded
-        positionPanel(animate: true)
+        schedulePanelPosition(animate: true)
     }
 
     @objc private func screenChanged() {

@@ -566,3 +566,37 @@
 验证：
 
 - `swift build` 通过。
+
+## 2026-07-10 Iteration 13 - Expansion render-loop fix and current-product audit
+
+触发场景：
+
+- 通过 macOS Accessibility 执行收起态 header 的 Press action 后，Agent Island 持续占用约 100% CPU 并失去响应。
+- 采样栈显示主线程先进入同步窗口 resize，随后长期停留在 SwiftUI AttributeGraph transaction flush。
+
+根因与修复：
+
+- `PendingRequestStore.request(for:)` 是 SwiftUI render path 上的查询，却调用 `prune()` 修改 `@Published requests`。
+- 即使没有记录被删除，原先的 `removeAll` 也会发布变化，形成 render -> query -> publish -> render 循环。
+- `request(for:)` 已改为纯读取；`prune()` 只有真正删除记录时才替换数组并发布。
+- AppDelegate 的面板 frame 更新改为下一轮主线程执行、合并重复请求，并使用非阻塞 `NSAnimationContext` 动画，避免 Accessibility action 中的 AppKit 嵌套事件循环。
+
+真实 UI 回归：
+
+- Accessibility Press 可展开。
+- 展开后的完整辅助功能树可在约 1 秒读取。
+- ScrollView 和所有当前行可见。
+- 再次 Press 可正常收起，进程不再持续 100% CPU。
+
+验证：
+
+- `swift build` 通过。
+- `scripts/validate-session-reducer` 通过。
+- `scripts/validate-expansion-controller` 通过。
+- 重新构建并安装 `/Applications/Agent Island.app`。
+
+审计结论：
+
+- 当前产品属于 internal alpha，全部需求综合覆盖约 40%。
+- 当前首要缺口仍是旧会话/僵尸状态、availability 与 activity 分层、多窗口会话身份、精准跳转和真实 Swift/UI 测试。
+- 本机诊断为 `PASS=19 WARN=14 FAIL=0`；WARN 主要是可选终端能力和当前未运行的应用。

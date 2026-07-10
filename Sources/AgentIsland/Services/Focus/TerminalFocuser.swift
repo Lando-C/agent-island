@@ -5,6 +5,17 @@ import AppKit
 import Foundation
 
 enum TerminalFocuser {
+    static func isFrontmost(_ target: TerminalJumpTarget) -> Bool {
+        guard let frontmost = NSWorkspace.shared.frontmostApplication else { return false }
+        if let pid = target.pid, frontmost.processIdentifier == pid_t(pid) { return true }
+        if let bundleID = target.bundleID, frontmost.bundleIdentifier == bundleID { return true }
+        let expected = bundleID(for: normalizedAppName(target.appName))
+        if let expected, frontmost.bundleIdentifier == expected { return true }
+        let expectedName = normalizedAppName(target.appName)?.lowercased()
+        let currentName = normalizedAppName(frontmost.localizedName)?.lowercased()
+        return expectedName != nil && expectedName == currentName
+    }
+
     static func focus(_ target: TerminalJumpTarget) -> Bool {
         let normalizedName = normalizedAppName(target.appName)
 
@@ -32,6 +43,11 @@ enum TerminalFocuser {
 
         if normalizedName == "Ghostty",
            focusGhostty(target) {
+            return true
+        }
+
+        if normalizedName == "cmux",
+           focusCmux(target) {
             return true
         }
 
@@ -226,7 +242,14 @@ enum TerminalFocuser {
 
     private static func focusWezTermPane(_ pane: String) -> Bool {
         guard !pane.isEmpty, let cli = wezTermCLIURL() else { return false }
-        return runProcess(cli, arguments: ["cli", "activate-pane", "--pane-id", pane])
+        for environment in wezTermEnvironments() {
+            let list = processOutput(cli, arguments: ["cli", "list", "--format", "json"], environment: environment)
+            guard wezTermPaneExists(pane, in: list) else { continue }
+            if runProcess(cli, arguments: ["cli", "activate-pane", "--pane-id", pane], environment: environment) {
+                return true
+            }
+        }
+        return false
     }
 
     private static func focusWezTermByContext(_ target: TerminalJumpTarget) -> Bool {
@@ -234,7 +257,14 @@ enum TerminalFocuser {
               let paneID = wezTermPaneID(cli: cli, tty: normalizedTTY(target.tty), cwd: target.cwd) else {
             return false
         }
-        return runProcess(cli, arguments: ["cli", "activate-pane", "--pane-id", paneID])
+        for environment in wezTermEnvironments() {
+            let list = processOutput(cli, arguments: ["cli", "list", "--format", "json"], environment: environment)
+            guard wezTermPaneExists(paneID, in: list) else { continue }
+            if runProcess(cli, arguments: ["cli", "activate-pane", "--pane-id", paneID], environment: environment) {
+                return true
+            }
+        }
+        return false
     }
 
     private static func focusKittyWindow(_ window: String) -> Bool {
@@ -278,6 +308,41 @@ enum TerminalFocuser {
                 end if
             end try
             activate
+        end tell
+        return ""
+        """
+        return runAppleScript(script).trimmingCharacters(in: .whitespacesAndNewlines) == "focused"
+    }
+
+    private static func focusCmux(_ target: TerminalJumpTarget) -> Bool {
+        let tabID = target.windowID ?? ""
+        let terminalID = target.tabIndex ?? target.sessionIdentifier ?? ""
+        guard !tabID.isEmpty else { return false }
+        let script = """
+        tell application "cmux"
+            activate
+            set wantedTabId to \(appleScriptLiteral(tabID))
+            set wantedTermId to \(appleScriptLiteral(terminalID))
+            repeat with aWindow in windows
+                repeat with aTab in tabs of aWindow
+                    if (id of aTab as text) is wantedTabId then
+                        activate window aWindow
+                        select tab aTab
+                        if wantedTermId is not "" then
+                            repeat with aTerm in terminals of aTab
+                                if (id of aTerm as text) is wantedTermId then
+                                    focus aTerm
+                                    delay 0.05
+                                    activate window aWindow
+                                    activate
+                                    return "focused"
+                                end if
+                            end repeat
+                        end if
+                        return "focused"
+                    end if
+                end repeat
+            end repeat
         end tell
         return ""
         """
@@ -418,11 +483,10 @@ enum TerminalFocuser {
     }
 
     private static func wezTermPaneID(cli: URL, tty: String?, cwd: String?) -> String? {
-        let output = processOutput(cli, arguments: ["cli", "list", "--format", "json"])
-        guard let data = output.data(using: .utf8),
-              let panes = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return nil
-        }
+        for environment in wezTermEnvironments() {
+            let output = processOutput(cli, arguments: ["cli", "list", "--format", "json"], environment: environment)
+            guard let data = output.data(using: .utf8),
+                  let panes = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { continue }
         let ttyName = tty?.components(separatedBy: "/").last
         let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -441,8 +505,30 @@ enum TerminalFocuser {
                 return paneID(from: pane)
             }
         }
-
+        }
         return nil
+    }
+
+    private static func wezTermPaneExists(_ targetPaneID: String, in output: String) -> Bool {
+        guard let data = output.data(using: .utf8),
+              let panes = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
+        return panes.contains { paneID(from: $0) == targetPaneID }
+    }
+
+    private static func wezTermEnvironments() -> [[String: String]?] {
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share/wezterm")
+        let sockets = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ))?.filter { $0.lastPathComponent.hasPrefix("gui-sock-") }
+            .sorted {
+                let lhs = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rhs = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return lhs > rhs
+            } ?? []
+        let environments = sockets.map { ["WEZTERM_UNIX_SOCKET": $0.path] }
+        return environments.isEmpty ? [nil] : environments.map(Optional.some)
     }
 
     private static func paneID(from pane: [String: Any]) -> String? {
@@ -465,10 +551,11 @@ enum TerminalFocuser {
     }
 
     @discardableResult
-    private static func runProcess(_ executable: URL, arguments: [String]) -> Bool {
+    private static func runProcess(_ executable: URL, arguments: [String], environment: [String: String]? = nil) -> Bool {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
+        if let environment { process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new } }
         process.standardOutput = Pipe()
         process.standardError = Pipe()
         do {
@@ -485,10 +572,11 @@ enum TerminalFocuser {
         processOutput(executable, arguments: arguments)
     }
 
-    private static func processOutput(_ executable: URL, arguments: [String]) -> String {
+    private static func processOutput(_ executable: URL, arguments: [String], environment: [String: String]? = nil) -> String {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
+        if let environment { process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new } }
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()

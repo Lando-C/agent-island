@@ -24,7 +24,9 @@ final class HookSocketServer {
 
     init(store: PendingRequestStore) {
         self.store = store
-        self.store.onDecision = { [weak self] request, decision in
+        self.store.addDecisionHandler { [weak self] request, decision in
+            guard request.family == .claude,
+                  request.responseSchema?.hasPrefix("claude_") == true else { return }
             self?.respond(to: request, decision: decision)
         }
     }
@@ -177,7 +179,7 @@ final class HookSocketServer {
             }
             let pending = self.store.upsert(socketRequest: request)
             self.queue.async {
-                if pending.canRespondInline, pending.kind == .permission {
+                if pending.canRespondInline {
                     self.pendingConnections[pending.id] = PendingConnection(
                         fd: fd,
                         request: pending,
@@ -224,7 +226,7 @@ final class HookSocketServer {
                 return
             }
 
-            guard let data = self.responseData(for: pending.request, decision: decision) else {
+            guard let data = Self.responseData(for: pending.request, decision: decision) else {
                 self.sendFallbackAndClose(pending.fd)
                 DispatchQueue.main.async {
                     self.store.markFailed(id: request.id, message: "暂不支持该请求类型")
@@ -243,27 +245,86 @@ final class HookSocketServer {
         }
     }
 
-    private func responseData(for request: PendingRequest, decision: PendingRequestDecision) -> Data? {
-        guard request.family == .claude, request.kind == .permission else { return nil }
-        let behavior: String
-        switch decision {
-        case .allow:
-            behavior = "allow"
-        case .deny:
-            behavior = "deny"
-        case .answer:
-            return nil
-        }
-
-        let payload: [String: Any] = [
-            "hookSpecificOutput": [
-                "hookEventName": "PermissionRequest",
-                "decision": [
-                    "behavior": behavior
+    static func responseData(for request: PendingRequest, decision: PendingRequestDecision) -> Data? {
+        guard request.family == .claude else { return nil }
+        let payload: [String: Any]?
+        switch request.responseSchema {
+        case "claude_permission_request":
+            let behavior: String
+            switch decision {
+            case .allow: behavior = "allow"
+            case .deny: behavior = "deny"
+            case .answer: return nil
+            }
+            payload = [
+                "hookSpecificOutput": [
+                    "hookEventName": "PermissionRequest",
+                    "decision": ["behavior": behavior]
                 ]
             ]
-        ]
+
+        case "claude_pre_tool_ask_user_question":
+            switch decision {
+            case .deny:
+                payload = [
+                    "hookSpecificOutput": [
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "deny",
+                        "permissionDecisionReason": "User declined from Agent Island"
+                    ]
+                ]
+            case .answer(let answers):
+                guard var updatedInput = Self.jsonObject(request.toolInputJSON) else { return nil }
+                var mappedAnswers: [String: Any] = [:]
+                for question in request.questions {
+                    guard let values = answers[question.id], !values.isEmpty else { continue }
+                    mappedAnswers[question.prompt] = values.joined(separator: ", ")
+                }
+                if mappedAnswers.isEmpty, let values = answers.values.first {
+                    let prompt = request.question ?? request.questions.first?.prompt ?? "Answer"
+                    mappedAnswers[prompt] = values.joined(separator: ", ")
+                }
+                updatedInput["answers"] = mappedAnswers
+                payload = [
+                    "hookSpecificOutput": [
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "updatedInput": updatedInput
+                    ]
+                ]
+            case .allow:
+                return nil
+            }
+
+        case "claude_elicitation":
+            switch decision {
+            case .deny:
+                payload = ["hookSpecificOutput": ["hookEventName": "Elicitation", "action": "decline"]]
+            case .answer(let answers):
+                let content = answers.reduce(into: [String: Any]()) { result, entry in
+                    result[entry.key] = entry.value.count == 1 ? entry.value[0] : entry.value
+                }
+                payload = [
+                    "hookSpecificOutput": [
+                        "hookEventName": "Elicitation",
+                        "action": "accept",
+                        "content": content
+                    ]
+                ]
+            case .allow:
+                payload = ["hookSpecificOutput": ["hookEventName": "Elicitation", "action": "accept", "content": [:]]]
+            }
+
+        default:
+            return nil
+        }
+        guard let payload else { return nil }
         return try? JSONSerialization.data(withJSONObject: payload)
+    }
+
+    private static func jsonObject(_ text: String?) -> [String: Any]? {
+        guard let text, let data = text.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     private func sendFallbackAndClose(_ fd: Int32) {

@@ -15,6 +15,8 @@ open-source projects.
   - collection behavior pattern for all-spaces/full-screen auxiliary notch panels
   - iTerm2 and Terminal exact `windowID + tabIndex` targeting before TTY/title
     fallback
+  - cmux tab/terminal AppleScript targeting
+  - WezTerm GUI socket enumeration before pane activation
 
 MIT license text from DevIsland:
 
@@ -84,6 +86,19 @@ SOFTWARE.
 - License: Apache-2.0
 - Used as architecture/product reference only in this version. No source file
   from agentbro is currently copied into Agent Island.
+
+## Ping Island
+
+- Repository: https://github.com/erha19/ping-island
+- License: Apache-2.0
+- Copyright notice in the upstream license: Copyright 2025 Farouq Aldori
+- Adapted portions:
+  - persistent Codex app-server/broker JSON-RPC response routing
+  - `item/tool/requestUserInput` answer payload shape
+  - command, file, and permission approval result boundaries
+
+The upstream Apache-2.0 license is available at:
+https://github.com/erha19/ping-island/blob/main/LICENSE
 
 ## Vibe Notch
 

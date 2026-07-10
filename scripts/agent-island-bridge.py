@@ -135,13 +135,16 @@ def infer_source(payload: dict[str, Any], explicit: str | None) -> str:
 
 
 def event_name(payload: dict[str, Any], event_arg: str | None) -> str:
-    return normalize_name(str(
+    event = normalize_name(str(
         event_arg
         or payload.get("hook_event_name")
         or payload.get("event")
         or payload.get("hookEventName")
         or ""
     ))
+    if event == "pretooluse" and normalize_name(tool_name(payload)) == "askuserquestion":
+        return "askuserquestion"
+    return event
 
 
 def tool_name(payload: dict[str, Any]) -> str:
@@ -679,7 +682,7 @@ def classify(source: str, event: str, payload: dict[str, Any]) -> tuple[str, str
     where = cwd(payload)
     suffix = f" · {os.path.basename(where)}" if where else ""
 
-    if event in {"permissionrequest", "elicitation"}:
+    if event in {"permissionrequest", "elicitation", "askuserquestion", "requestuserinput"}:
         title = f"{source.title()} 需要处理"
         detail = tool or "等待人工确认/输入"
         return "needs_attention", title, detail + suffix
@@ -818,7 +821,88 @@ def pending_event(source: str, event: str) -> bool:
 def response_schema(source: str, event: str) -> str:
     if source == "claude" and event == "permissionrequest":
         return "claude_permission_request"
+    if source == "claude" and event == "askuserquestion":
+        return "claude_pre_tool_ask_user_question"
+    if source == "claude" and event == "elicitation":
+        return "claude_elicitation"
     return "status_only"
+
+
+def compact_json(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    except Exception:
+        return ""
+
+
+def structured_questions(payload: dict[str, Any], event: str) -> list[dict[str, Any]]:
+    tool_input = tool_input_value(payload)
+    raw_questions: Any = None
+    if isinstance(tool_input, dict):
+        raw_questions = tool_input.get("questions")
+    if raw_questions is None:
+        raw_questions = payload.get("questions")
+
+    result: list[dict[str, Any]] = []
+    if isinstance(raw_questions, list):
+        for index, item in enumerate(raw_questions):
+            if not isinstance(item, dict):
+                continue
+            prompt = str(item.get("question") or item.get("prompt") or "").strip()
+            if not prompt:
+                continue
+            options: list[str] = []
+            for option in item.get("options", []) if isinstance(item.get("options"), list) else []:
+                if isinstance(option, dict):
+                    label = str(option.get("label") or option.get("value") or "").strip()
+                else:
+                    label = str(option).strip()
+                if label:
+                    options.append(compact_text(label, 120))
+            result.append({
+                "id": str(item.get("id") or prompt or f"question-{index}"),
+                "header": compact_text(item.get("header"), 80),
+                "prompt": compact_text(prompt, 500),
+                "options": options[:8],
+                "multiSelect": bool(item.get("multiSelect") or item.get("multi_select")),
+                "isSecret": bool(item.get("isSecret") or item.get("is_secret")),
+            })
+
+    if result:
+        return result
+
+    if event == "elicitation":
+        schema = payload.get("requested_schema") or payload.get("requestedSchema")
+        properties = schema.get("properties") if isinstance(schema, dict) else None
+        if isinstance(properties, dict):
+            for key, value in properties.items():
+                if not isinstance(value, dict):
+                    continue
+                enum_values = value.get("enum") if isinstance(value.get("enum"), list) else []
+                result.append({
+                    "id": str(key),
+                    "header": compact_text(value.get("title") or key, 80),
+                    "prompt": compact_text(value.get("description") or value.get("title") or key, 500),
+                    "options": [compact_text(item, 120) for item in enum_values[:8]],
+                    "multiSelect": value.get("type") == "array",
+                    "isSecret": bool(value.get("writeOnly") or value.get("format") == "password"),
+                })
+            if result:
+                return result
+
+    prompt = question_text(payload)
+    if prompt:
+        return [{
+            "id": prompt if event == "askuserquestion" else "answer",
+            "header": "",
+            "prompt": prompt,
+            "options": question_options(payload),
+            "multiSelect": False,
+            "isSecret": False,
+        }]
+    return []
 
 
 def question_text(payload: dict[str, Any]) -> str:
@@ -891,6 +975,17 @@ def socket_request(source: str, event: str, frame: dict[str, Any], payload: dict
     options = question_options(payload)
     if options:
         request["options"] = options
+    questions = structured_questions(payload, event)
+    if questions:
+        request["questions"] = questions
+        request["question"] = questions[0]["prompt"]
+        request["options"] = questions[0]["options"]
+    tool_input = tool_input_value(payload)
+    if tool_input is not None:
+        request["tool_input_json"] = compact_json(tool_input)
+    requested_schema = payload.get("requested_schema") or payload.get("requestedSchema")
+    if requested_schema is not None:
+        request["requested_schema_json"] = compact_json(requested_schema)
     return request
 
 

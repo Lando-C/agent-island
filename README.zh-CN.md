@@ -78,6 +78,21 @@ bash /tmp/agent-island-install --no-open
 5. 缺少 tmux server、WezTerm、kitty、Warp、cmux 或 Kaku 只表示对应可选能力
    不可用，不代表 Agent Island 安装失败。
 
+## 当前交互能力
+
+- Claude Code 的 `PermissionRequest`、`AskUserQuestion`、`Elicitation` 可在岛内
+  直接允许、拒绝或回答；支持多问题、多选项和自由文本。
+- Codex Desktop 存在实时 `cxc-*/broker.sock` 时，可直接回答
+  `requestUserInput` 及命令、文件、权限审批；broker 不可用或请求过期时会安全失败，
+  保留 Codex 原生提示，不会假装提交成功。
+- 点击会话行的对话按钮，可按需读取本地 Claude/Codex JSONL，查看用户消息、AI
+  回复、工具调用和工具结果。
+- 对应 App 或终端已在前台时，智能抑制只阻止自动大展开；状态更新、手动展开和
+  通知计数不受影响。
+- 长按刘海 0.35 秒并向下拖拽可进入离岛浮窗；位置自动记忆，右键可回到刘海。
+- 终端跳转支持 tmux、iTerm2、Terminal、Ghostty、WezTerm、kitty、cmux 等；
+  cmux 支持 tab/terminal ID，WezTerm 会枚举多个 GUI socket。
+
 ## 从源码安装
 
 需要 Xcode Command Line Tools：

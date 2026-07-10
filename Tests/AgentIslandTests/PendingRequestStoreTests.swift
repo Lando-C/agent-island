@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Combine
+import Foundation
 #if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 import Testing
 #elseif canImport(XCTest)
@@ -41,6 +42,70 @@ private func pendingStoreFixture() -> (store: PendingRequestStore, snapshot: Age
     return (store, snapshot)
 }
 
+private func claudeQuestionFixture() -> PendingRequest {
+    let store = PendingRequestStore()
+    let question = PendingQuestion(
+        id: "framework",
+        header: "Framework",
+        prompt: "Which framework?",
+        options: ["React", "Vue"],
+        multiSelect: false,
+        isSecret: false
+    )
+    return store.upsert(socketRequest: HookSocketRequest(
+        type: "hook_request",
+        source: "claude",
+        surface: "cli",
+        event: "AskUserQuestion",
+        status: "needs_attention",
+        title: nil,
+        message: nil,
+        session: "session-question",
+        rawSession: nil,
+        primarySession: nil,
+        parentSession: nil,
+        requestID: "question-1",
+        tool: "AskUserQuestion",
+        toolInputSummary: nil,
+        toolRisk: nil,
+        toolRiskReason: nil,
+        question: question.prompt,
+        options: question.options,
+        questions: [question],
+        responseSchema: "claude_pre_tool_ask_user_question",
+        toolInputJSON: #"{"questions":[{"question":"Which framework?","header":"Framework","options":[{"label":"React"},{"label":"Vue"}],"multiSelect":false}]}"#,
+        requestedSchemaJSON: nil,
+        ts: nil
+    ))
+}
+
+private func claudeQuestionResponseIsValid() -> Bool {
+    let request = claudeQuestionFixture()
+    guard let data = HookSocketServer.responseData(
+        for: request,
+        decision: .answer(["framework": ["React"]])
+    ), let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let output = root["hookSpecificOutput"] as? [String: Any],
+       output["hookEventName"] as? String == "PreToolUse",
+       output["permissionDecision"] as? String == "allow",
+       let input = output["updatedInput"] as? [String: Any],
+       let answers = input["answers"] as? [String: String] else {
+        return false
+    }
+    return answers["Which framework?"] == "React" && input["questions"] != nil
+}
+
+private func codexQuestionResponseIsValid() -> Bool {
+    let payload = CodexBrokerClient.userInputResponsePayload([
+        "framework": ["SwiftUI"],
+        "targets": ["macOS", "Linux"]
+    ])
+    guard let answers = payload["answers"] as? [String: Any],
+          let framework = answers["framework"] as? [String: [String]],
+          let targets = answers["targets"] as? [String: [String]] else { return false }
+    return framework["answers"] == ["SwiftUI"] && targets["answers"] == ["macOS", "Linux"]
+}
+
 #if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Pending request store")
 struct PendingRequestStoreTests {
@@ -55,6 +120,17 @@ struct PendingRequestStoreTests {
 
         withExtendedLifetime(cancellable) {}
     }
+
+    @Test("Claude AskUserQuestion response preserves questions and writes answers")
+    func claudeAskUserQuestionResponse() {
+        #expect(claudeQuestionResponseIsValid())
+    }
+
+
+    @Test("Codex requestUserInput response groups answers by question ID")
+    func codexRequestUserInputResponse() {
+        #expect(codexQuestionResponseIsValid())
+    }
 }
 #elseif canImport(XCTest)
 final class PendingRequestStoreTests: XCTestCase {
@@ -67,6 +143,16 @@ final class PendingRequestStoreTests: XCTestCase {
         XCTAssertEqual(publishCount, 0)
 
         withExtendedLifetime(cancellable) {}
+    }
+
+
+    func testClaudeAskUserQuestionResponsePreservesInput() {
+        XCTAssertTrue(claudeQuestionResponseIsValid())
+    }
+
+
+    func testCodexRequestUserInputResponseGroupsAnswers() {
+        XCTAssertTrue(codexQuestionResponseIsValid())
     }
 }
 #endif

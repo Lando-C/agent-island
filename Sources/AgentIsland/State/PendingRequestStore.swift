@@ -20,7 +20,16 @@ enum PendingRequestStatus: String, Codable {
 enum PendingRequestDecision {
     case allow
     case deny
-    case answer(String)
+    case answer([String: [String]])
+}
+
+struct PendingQuestion: Codable, Equatable, Identifiable {
+    var id: String
+    var header: String?
+    var prompt: String
+    var options: [String]
+    var multiSelect: Bool
+    var isSecret: Bool
 }
 
 struct PendingRequest: Identifiable, Equatable {
@@ -39,7 +48,11 @@ struct PendingRequest: Identifiable, Equatable {
     var toolRiskReason: String?
     var question: String?
     var options: [String]
+    var questions: [PendingQuestion]
     var canRespondInline: Bool
+    var responseSchema: String?
+    var toolInputJSON: String?
+    var requestedSchemaJSON: String?
     var createdAt: Date
     var updatedAt: Date
     var responseMessage: String?
@@ -76,11 +89,14 @@ struct HookSocketRequest: Decodable {
     var toolRiskReason: String?
     var question: String?
     var options: [String]?
+    var questions: [PendingQuestion]?
     var responseSchema: String?
+    var toolInputJSON: String?
+    var requestedSchemaJSON: String?
     var ts: Double?
 
     enum CodingKeys: String, CodingKey {
-        case type, source, surface, event, status, title, message, session, tool, question, options, ts
+        case type, source, surface, event, status, title, message, session, tool, question, options, questions, ts
         case rawSession = "raw_session"
         case primarySession = "primary_session"
         case parentSession = "parent_session"
@@ -89,6 +105,8 @@ struct HookSocketRequest: Decodable {
         case toolRisk = "tool_risk"
         case toolRiskReason = "tool_risk_reason"
         case responseSchema = "response_schema"
+        case toolInputJSON = "tool_input_json"
+        case requestedSchemaJSON = "requested_schema_json"
     }
 
     var normalizedEvent: String {
@@ -125,7 +143,14 @@ struct HookSocketRequest: Decodable {
     }
 
     var canRespondInline: Bool {
-        responseSchema == "claude_permission_request"
+        switch responseSchema {
+        case "claude_permission_request", "claude_pre_tool_ask_user_question", "claude_elicitation",
+             "codex_app_server_user_input", "codex_app_server_command_approval",
+             "codex_app_server_file_approval", "codex_app_server_permissions_approval":
+            return true
+        default:
+            return false
+        }
     }
 
     var pendingID: String {
@@ -142,7 +167,7 @@ struct HookSocketRequest: Decodable {
 final class PendingRequestStore: ObservableObject {
     @Published private(set) var requests: [PendingRequest] = []
 
-    var onDecision: ((PendingRequest, PendingRequestDecision) -> Void)?
+    private var decisionHandlers: [(PendingRequest, PendingRequestDecision) -> Void] = []
 
     private let retention: TimeInterval = 10 * 60
 
@@ -152,6 +177,10 @@ final class PendingRequestStore: ObservableObject {
 
     var firstPendingPermission: PendingRequest? {
         requests.first { $0.isPending && $0.canApproveInline }
+    }
+
+    func addDecisionHandler(_ handler: @escaping (PendingRequest, PendingRequestDecision) -> Void) {
+        decisionHandlers.append(handler)
     }
 
     func upsert(socketRequest: HookSocketRequest) -> PendingRequest {
@@ -172,7 +201,11 @@ final class PendingRequestStore: ObservableObject {
             toolRiskReason: emptyToNil(socketRequest.toolRiskReason),
             question: emptyToNil(socketRequest.question),
             options: socketRequest.options ?? [],
+            questions: socketRequest.questions ?? [],
             canRespondInline: socketRequest.canRespondInline,
+            responseSchema: emptyToNil(socketRequest.responseSchema),
+            toolInputJSON: emptyToNil(socketRequest.toolInputJSON),
+            requestedSchemaJSON: emptyToNil(socketRequest.requestedSchemaJSON),
             createdAt: now,
             updatedAt: now,
             responseMessage: nil
@@ -217,7 +250,12 @@ final class PendingRequestStore: ObservableObject {
     }
 
     func answer(_ request: PendingRequest, text: String) {
-        decide(request, decision: .answer(text), status: .answered, message: "已回复")
+        let key = request.questions.first?.id ?? request.question ?? "answer"
+        answer(request, answers: [key: [text]])
+    }
+
+    func answer(_ request: PendingRequest, answers: [String: [String]]) {
+        decide(request, decision: .answer(answers), status: .answered, message: "已回复")
     }
 
     func markFailed(id: String, message: String) {
@@ -257,7 +295,7 @@ final class PendingRequestStore: ObservableObject {
         message: String
     ) {
         update(id: request.id, status: status, message: message)
-        onDecision?(request, decision)
+        decisionHandlers.forEach { $0(request, decision) }
     }
 
     private func update(id: String, status: PendingRequestStatus, message: String) {

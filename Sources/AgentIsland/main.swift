@@ -3251,11 +3251,14 @@ struct IslandView: View {
     @ObservedObject var pendingRequests: PendingRequestStore
     var onExpandedChange: (Bool) -> Void = { _ in }
     var onSnapshotAction: (AgentSnapshot) -> Void = { _ in }
+    var onSnapshotDetails: (AgentSnapshot) -> Void = { _ in }
+    var onDetachRequested: () -> Void = {}
     @StateObject private var expansion = IslandExpansionController()
     @State private var pulse = false
     @State private var orbitAngle = 0.0
     @State private var previousPhaseByID: [String: AgentPhase] = [:]
     @State private var copiedSnapshotID: String?
+    @State private var detachGestureTriggered = false
     private let motionTicker = Timer.publish(every: 1.2, on: .main, in: .common).autoconnect()
 
     private var expanded: Bool {
@@ -3401,6 +3404,20 @@ struct IslandView: View {
         .background(backgroundShape)
         .overlay(borderShape)
         .shadow(color: Color.black.opacity(0.35), radius: expanded ? 22 : 12, x: 0, y: 10)
+        .simultaneousGesture(detachGesture)
+    }
+
+    private var detachGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.35, maximumDistance: 8)
+            .sequenced(before: DragGesture(minimumDistance: 10))
+            .onChanged { value in
+                guard case .second(true, let drag?) = value,
+                      drag.translation.height > 28,
+                      !detachGestureTriggered else { return }
+                detachGestureTriggered = true
+                onDetachRequested()
+            }
+            .onEnded { _ in detachGestureTriggered = false }
     }
 
     private var header: some View {
@@ -3514,6 +3531,9 @@ struct IslandView: View {
                         onCopy: {
                             copySnapshotSummary(snapshot)
                         },
+                        onDetails: {
+                            onSnapshotDetails(snapshot)
+                        },
                         onAllow: { request in
                             pendingRequests.allow(request)
                         },
@@ -3531,8 +3551,8 @@ struct IslandView: View {
                         onAllow: { pendingRequests.allow(request) },
                         onDeny: { pendingRequests.deny(request) },
                         onCopy: { copyPendingRequest(request) },
-                        onCopyAnswer: { answer in
-                            copyPendingRequest(request, answer: answer)
+                        onAnswer: { answers in
+                            pendingRequests.answer(request, answers: answers)
                         }
                     )
                 }
@@ -3592,6 +3612,10 @@ struct IslandView: View {
         guard let snapshot = snapshots.first(where: shouldSpotlight) else { return }
         let previous = previousPhaseByID[snapshot.id]
         guard previous != nil, previous != snapshot.phase else { return }
+        guard !SmartSuppression.shouldSuppressSpotlight(for: snapshot) else {
+            islandLog("spotlight suppressed frontmost session=\(snapshot.sessionID ?? snapshot.id) phase=\(snapshot.phase.rawValue)")
+            return
+        }
         expansion.showSpotlight(snapshot, duration: autoSpotlightDuration(for: snapshot))
     }
 
@@ -3658,6 +3682,7 @@ struct AgentRow: View {
     var copied: Bool = false
     var onOpen: () -> Void = {}
     var onCopy: () -> Void = {}
+    var onDetails: () -> Void = {}
     var onAllow: (PendingRequest) -> Void = { _ in }
     var onDeny: (PendingRequest) -> Void = { _ in }
     @State private var hovering = false
@@ -3674,6 +3699,18 @@ struct AgentRow: View {
 
             if snapshot.hasQuickActions {
                 quickActions
+            }
+
+            if snapshot.sessionID != nil {
+                Button(action: onDetails) {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.72))
+                        .frame(width: 22, height: 22)
+                        .background(Color.white.opacity(0.08), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("查看完整聊天与工具记录")
             }
 
             phaseBadge
@@ -3848,8 +3885,10 @@ struct PendingRequestCard: View {
     var onAllow: () -> Void = {}
     var onDeny: () -> Void = {}
     var onCopy: () -> Void = {}
-    var onCopyAnswer: (String) -> Void = { _ in }
+    var onAnswer: ([String: [String]]) -> Void = { _ in }
     @State private var hovering = false
+    @State private var selectedAnswers: [String: [String]] = [:]
+    @State private var freeTextAnswers: [String: String] = [:]
 
     var body: some View {
         HStack(spacing: 10) {
@@ -3868,7 +3907,7 @@ struct PendingRequestCard: View {
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                    if let toolRisk = request.toolRisk, !toolRisk.isEmpty {
+                    if request.kind == .permission, let toolRisk = request.toolRisk, !toolRisk.isEmpty {
                         Text(toolRiskLabel(toolRisk))
                             .font(.system(size: 8.5, weight: .bold, design: .rounded))
                             .foregroundStyle(.black.opacity(0.86))
@@ -3883,24 +3922,8 @@ struct PendingRequestCard: View {
                     .foregroundStyle(Color.white.opacity(0.64))
                     .lineLimit(1)
 
-                if request.kind == .input, !request.options.isEmpty {
-                    HStack(spacing: 4) {
-                        ForEach(Array(request.options.prefix(3)), id: \.self) { option in
-                            Button {
-                                onCopyAnswer(option)
-                            } label: {
-                                Text(option)
-                                    .font(.system(size: 9, weight: .semibold, design: .rounded))
-                                    .foregroundStyle(.white.opacity(0.82))
-                                    .lineLimit(1)
-                                    .padding(.horizontal, 7)
-                                    .padding(.vertical, 3)
-                                    .background(Color.white.opacity(0.08), in: Capsule())
-                            }
-                            .buttonStyle(.plain)
-                            .help("复制该选项，回到原会话提交")
-                        }
-                    }
+                if request.kind == .input, request.canAnswerInline {
+                    inputControls
                 }
             }
 
@@ -3940,7 +3963,7 @@ struct PendingRequestCard: View {
                 .help(copied ? "已复制" : "复制请求摘要")
             }
         }
-        .frame(maxWidth: .infinity, minHeight: request.options.isEmpty ? 42 : 58)
+        .frame(maxWidth: .infinity, minHeight: request.kind == .input ? 62 : 42)
         .padding(.horizontal, 4)
         .background(Color.white.opacity(hovering ? 0.07 : 0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay {
@@ -3956,6 +3979,143 @@ struct PendingRequestCard: View {
 
     private var icon: String {
         request.kind == .permission ? "hand.raised.fill" : "text.bubble.fill"
+    }
+
+    @ViewBuilder
+    private var inputControls: some View {
+        let questions = displayQuestions
+        if questions.count == 1, let question = questions.first {
+            if question.options.isEmpty {
+                HStack(spacing: 5) {
+                    freeTextField(for: question)
+                    Button { submitFreeText(question) } label: {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(normalizedFreeText(for: question).isEmpty)
+                    .help("直接提交回复")
+                }
+            } else {
+                optionButtons(for: question, submitsImmediately: !question.multiSelect)
+                if question.multiSelect {
+                    submitAnswersButton
+                }
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 5) {
+                ForEach(questions.prefix(3)) { question in
+                    Text(question.header ?? question.prompt)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.68))
+                        .lineLimit(1)
+                    if question.options.isEmpty {
+                        freeTextField(for: question)
+                    } else {
+                        optionButtons(for: question, submitsImmediately: false)
+                    }
+                }
+                submitAnswersButton
+            }
+        }
+    }
+
+    private var displayQuestions: [PendingQuestion] {
+        if !request.questions.isEmpty { return request.questions }
+        guard let prompt = request.question else { return [] }
+        return [PendingQuestion(
+            id: prompt,
+            header: nil,
+            prompt: prompt,
+            options: request.options,
+            multiSelect: false,
+            isSecret: false
+        )]
+    }
+
+    private func optionButtons(for question: PendingQuestion, submitsImmediately: Bool) -> some View {
+        HStack(spacing: 4) {
+            ForEach(Array(question.options.prefix(4)), id: \.self) { option in
+                Button {
+                    select(option, for: question)
+                    if submitsImmediately { onAnswer([question.id: [option]]) }
+                } label: {
+                    Text(option)
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.84))
+                        .lineLimit(1)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            (selectedAnswers[question.id]?.contains(option) == true ? Color.cyan.opacity(0.28) : Color.white.opacity(0.08)),
+                            in: Capsule()
+                        )
+                }
+                .buttonStyle(.plain)
+                .help(submitsImmediately ? "直接提交该选项" : "选择该选项")
+            }
+        }
+    }
+
+    private var submitAnswersButton: some View {
+        Button {
+            onAnswer(selectedAnswers)
+        } label: {
+            Label("提交回答", systemImage: "paperplane.fill")
+                .font(.system(size: 9, weight: .semibold))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.cyan)
+        .disabled(!hasAllRequiredAnswers)
+    }
+
+    @ViewBuilder
+    private func freeTextField(for question: PendingQuestion) -> some View {
+        let binding = Binding<String>(
+            get: { freeTextAnswers[question.id] ?? "" },
+            set: { value in
+                freeTextAnswers[question.id] = value
+                selectedAnswers[question.id] = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [value]
+            }
+        )
+        Group {
+            if question.isSecret {
+                SecureField("输入回复", text: binding)
+            } else {
+                TextField("输入回复", text: binding)
+            }
+        }
+        .textFieldStyle(.plain)
+        .font(.system(size: 10))
+        .padding(.horizontal, 7)
+        .frame(height: 23)
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 5))
+        .onSubmit { submitFreeText(question) }
+    }
+
+    private var hasAllRequiredAnswers: Bool {
+        !displayQuestions.isEmpty && displayQuestions.allSatisfy { selectedAnswers[$0.id]?.isEmpty == false }
+    }
+
+    private func select(_ option: String, for question: PendingQuestion) {
+        if question.multiSelect {
+            var values = selectedAnswers[question.id] ?? []
+            if let index = values.firstIndex(of: option) { values.remove(at: index) } else { values.append(option) }
+            selectedAnswers[question.id] = values
+        } else {
+            selectedAnswers[question.id] = [option]
+        }
+    }
+
+    private func submitFreeText(_ question: PendingQuestion) {
+        let text = normalizedFreeText(for: question)
+        guard !text.isEmpty else { return }
+        onAnswer([question.id: [text]])
+    }
+
+    private func normalizedFreeText(for question: PendingQuestion) -> String {
+        (freeTextAnswers[question.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func toolRiskLabel(_ risk: String) -> String {
@@ -4240,6 +4400,7 @@ private enum NotchPlacement {
 }
 
 final class IslandPanel: NSPanel {
+    var returnToNotch: (() -> Void)?
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
@@ -4247,6 +4408,30 @@ final class IslandPanel: NSPanel {
     // AppKit otherwise tries to pull borderless panels out of the menu-bar/notch area.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
         frameRect
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard isMovableByWindowBackground else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        let menu = NSMenu()
+        let item = NSMenuItem(title: "回到刘海", action: #selector(returnToNotchAction), keyEquivalent: "")
+        item.target = self
+        menu.addItem(item)
+        menu.addItem(.separator())
+        let quit = NSMenuItem(title: "退出 Agent Island", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "")
+        quit.target = NSApp
+        menu.addItem(quit)
+        if let contentView {
+            NSMenu.popUpContextMenu(menu, with: event, for: contentView)
+        } else {
+            super.rightMouseDown(with: event)
+        }
+    }
+
+    @objc private func returnToNotchAction() {
+        returnToNotch?()
     }
 }
 
@@ -4261,14 +4446,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let monitor = AgentMonitor()
     private let pendingRequests = PendingRequestStore()
     private lazy var hookSocketServer = HookSocketServer(store: pendingRequests)
+    private lazy var codexBrokerClient = CodexBrokerClient(store: pendingRequests)
     private var panel: NSPanel?
     private var statusItem: NSStatusItem?
     private var settingsWindowController: AgentSettingsWindowController?
+    private var chatDetailWindowControllers: [ChatDetailWindowController] = []
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
     private var didStart = false
     private var isExpanded = false
     private var panelPositionGeneration = 0
+    private var displayMode = IslandDisplayModeStore.mode
 
     private var dataRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agent-island")
@@ -4312,6 +4500,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupKeyMonitors()
         hookSocketServer.start()
+        codexBrokerClient.start()
         islandLog("ui started")
 
         DispatchQueue.main.async { [weak self] in
@@ -4324,6 +4513,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             selector: #selector(screenChanged),
             name: NSApplication.didChangeScreenParametersNotification,
             object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(panelDidMove),
+            name: NSWindow.didMoveNotification,
+            object: panel
         )
         NotificationCenter.default.addObserver(
             self,
@@ -4342,6 +4537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSEvent.removeMonitor(globalKeyMonitor)
         }
         hookSocketServer.stop()
+        codexBrokerClient.stop()
     }
 
     private func setupPanel() {
@@ -4363,6 +4559,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.ignoresMouseEvents = false
         panel.acceptsMouseMovedEvents = true
         panel.animationBehavior = .none
+        panel.isMovable = displayMode == .floating
+        panel.isMovableByWindowBackground = displayMode == .floating
+        panel.returnToNotch = { [weak self] in self?.returnToNotch() }
 
         let hostingView = NSHostingView(rootView: IslandView(
             monitor: monitor,
@@ -4372,6 +4571,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onSnapshotAction: { snapshot in
                 AgentLauncher.focus(snapshot)
+            },
+            onSnapshotDetails: { [weak self] snapshot in
+                self?.showChatDetails(snapshot)
+            },
+            onDetachRequested: { [weak self] in
+                self?.enterFloatingMode()
             }
         ))
         hostingView.wantsLayer = true
@@ -4400,6 +4605,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(toggleItem)
         menu.addItem(NSMenuItem(title: "Show Island", action: #selector(showIsland), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Hide Island", action: #selector(hideIsland), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Toggle Floating Mode", action: #selector(toggleFloatingMode), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Refresh Now", action: #selector(refreshNow), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Open Status Folder", action: #selector(openStatusFolder), keyEquivalent: ""))
@@ -4513,7 +4719,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func positionPanel(animate: Bool = false) {
         guard let panel, let screen = NSScreen.main else { return }
         let size = IslandPanelSizing.size(expanded: isExpanded, on: screen)
-        let frame = NotchPlacement.frame(for: size, on: screen)
+        let frame: NSRect
+        if displayMode == .floating {
+            let currentOrigin = IslandDisplayModeStore.floatingOrigin ?? NSPoint(
+                x: screen.visibleFrame.maxX - size.width - 24,
+                y: screen.visibleFrame.midY - size.height / 2
+            )
+            frame = clampedFloatingFrame(NSRect(origin: currentOrigin, size: size), screen: screen)
+        } else {
+            frame = NotchPlacement.frame(for: size, on: screen)
+        }
         if animate {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.22
@@ -4524,6 +4739,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             panel.setFrame(frame, display: true)
         }
         islandLog("position display=\(screen.displayId) notched=\(NotchPlacement.hasNotch(on: screen)) screen=\(screen.frame) visible=\(screen.visibleFrame) target=\(frame)")
+    }
+
+    private func clampedFloatingFrame(_ frame: NSRect, screen: NSScreen) -> NSRect {
+        let visible = screen.visibleFrame.insetBy(dx: 8, dy: 8)
+        let x = min(max(frame.minX, visible.minX), max(visible.minX, visible.maxX - frame.width))
+        let y = min(max(frame.minY, visible.minY), max(visible.minY, visible.maxY - frame.height))
+        return NSRect(x: x, y: y, width: frame.width, height: frame.height)
+    }
+
+    @objc private func toggleFloatingMode() {
+        displayMode == .floating ? returnToNotch() : enterFloatingMode()
+    }
+
+    private func enterFloatingMode() {
+        guard displayMode != .floating, let panel else { return }
+        displayMode = .floating
+        IslandDisplayModeStore.mode = .floating
+        IslandDisplayModeStore.floatingOrigin = panel.frame.origin
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
+        positionPanel(animate: true)
+        islandLog("display mode floating")
+    }
+
+    private func returnToNotch() {
+        guard displayMode != .notch, let panel else { return }
+        IslandDisplayModeStore.floatingOrigin = panel.frame.origin
+        displayMode = .notch
+        IslandDisplayModeStore.mode = .notch
+        panel.isMovable = false
+        panel.isMovableByWindowBackground = false
+        positionPanel(animate: true)
+        islandLog("display mode notch")
+    }
+
+    @objc private func panelDidMove(_ notification: Notification) {
+        guard displayMode == .floating, let panel else { return }
+        IslandDisplayModeStore.floatingOrigin = panel.frame.origin
     }
 
     private func schedulePanelPosition(animate: Bool) {
@@ -4546,6 +4799,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func settingsChanged() {
+        let requestedMode = IslandDisplayModeStore.mode
+        if requestedMode != displayMode {
+            requestedMode == .floating ? enterFloatingMode() : returnToNotch()
+        }
         positionPanel(animate: true)
     }
 
@@ -4559,6 +4816,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func showChatDetails(_ snapshot: AgentSnapshot) {
+        chatDetailWindowControllers.removeAll { $0.window?.isVisible != true }
+        let controller = ChatDetailWindowController(snapshot: snapshot)
+        chatDetailWindowControllers.append(controller)
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

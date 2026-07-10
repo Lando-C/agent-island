@@ -29,6 +29,8 @@ The goal is not to show that an app is online. The goal is to answer:
   reported as "working" without reliable signals.
 - Terminal and tmux jump targets through `JumpTarget.terminal` and
   `JumpTarget.tmux`.
+- Exact cmux tab/terminal selection and multi-socket WezTerm pane discovery,
+  with TTY/CWD and app-level fallbacks for the remaining terminals.
 - Clickable rows for returning to related sessions where a target can be known.
 - Scrollable expanded session list.
 - Auto spotlight for working, waiting, done, and error transitions, with short
@@ -46,6 +48,18 @@ The goal is not to show that an app is online. The goal is to answer:
   - Claude Code: `~/.claude/settings.json`
   - Codex CLI: `~/.codex/hooks.json` and `~/.codex/config.toml`
 - Pending request store and local hook socket for human handoff.
+- Direct Claude Code write-back for `PermissionRequest`, `AskUserQuestion`, and
+  `Elicitation`, including multi-question, multi-select, and free-text answers.
+- Persistent Codex Desktop broker client for `requestUserInput`, command, file,
+  and permission responses when a live `cxc-*/broker.sock` is available. If the
+  broker is absent or the request has expired, Agent Island fails closed and
+  leaves the native Codex prompt in control.
+- On-demand local chat detail windows for Claude and Codex JSONL transcripts,
+  including user/assistant messages and tool calls/results.
+- Smart spotlight suppression when the corresponding App or terminal is
+  already frontmost; status still updates and manual expansion still works.
+- Off-island floating mode with 0.35-second long-press/downward-drag detach,
+  persisted position, status-menu toggle, and right-click return to the notch.
 - Stale session convergence: completed work expires after 10 minutes, idle
   capability rows after 1 hour, and inactive waiting/error events after 12
   hours. Process-aware zombie detection remains on the roadmap.
@@ -56,9 +70,8 @@ The goal is not to show that an app is online. The goal is to answer:
   permanent 60 fps redraws, and respects macOS Reduce Motion.
 - In-island allow/deny for Claude Code `PermissionRequest` hooks.
 - `request_user_input` / elicitation events are captured as structured pending
-  requests. Questions and choices are visible in the island and can be copied
-  back to the source session; direct write-back remains conservative until each
-  engine response schema is verified.
+  requests. Verified Claude hook and Codex app-server schemas are written back
+  directly; unsupported transports remain visible but fail closed.
 - Optional auto approval for safe read-only Claude PermissionRequest tools.
   It is off by default. Dangerous operations are never auto-approved.
 
@@ -197,8 +210,9 @@ Human approval requests use a local Unix socket:
 ```
 
 The hook bridge connects to that socket for pending requests. Claude Code
-`PermissionRequest` can be allowed or denied directly in the island. If the app
-is not running or the socket is unavailable, the bridge falls back to the native
+`PermissionRequest` can be allowed or denied directly in the island, while
+`AskUserQuestion` and `Elicitation` can return structured answers. If the app is
+not running or the socket is unavailable, the bridge falls back to the native
 agent flow instead of silently approving anything.
 
 ## Safety Model
@@ -289,16 +303,16 @@ The product direction is documented in:
 
 Next priority is not a UI rewrite. The next product work should be:
 
-1. Verify Codex approval and question response schemas before enabling inline
-   write-back.
-2. More exact terminal focusing for Warp, Ghostty, WezTerm, kitty, cmux, and Kaku.
-3. Hook-driven chat history and tool details.
+1. Connect Codex CLI interactive requests that do not expose a desktop broker,
+   while preserving the fail-closed native prompt fallback.
+2. More exact existing-window focusing for Warp, kitty, and Kaku.
+3. Incremental hook-driven chat history so details do not need on-demand JSONL
+   parsing.
 4. Process-aware zombie detection and transcript fallback beyond the existing
    time-based stale-session pruning.
-5. Smart suppression when the exact target session is already frontmost.
-6. Release packaging, signing/notarization plan, and Homebrew cask.
-7. Off-island floating mode, mascot, and sound once the status/jump core is
-   reliable.
+5. Release signing/notarization and Homebrew cask.
+6. Replace the floating capsule MVP with configurable animated mascots and add
+   opt-in event sounds.
 
 ## Reference Projects
 

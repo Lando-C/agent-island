@@ -75,6 +75,8 @@ struct AgentSettingsView: View {
     @State private var idleWidth = AgentSettingsStore.idleWidth
     @State private var workingWidth = AgentSettingsStore.workingWidth
     @State private var launchStatus = LaunchAtLoginController.statusText
+    @State private var smartSuppression = SmartSuppression.isEnabled
+    @State private var floatingMode = IslandDisplayModeStore.mode == .floating
     @State private var settingsMessage = ""
 
     var body: some View {
@@ -187,7 +189,12 @@ struct AgentSettingsView: View {
             }
 
             settingSection("离岛和吉祥物") {
-                roadmapLine("离岛模式", "长按 0.35s 向下拖拽，浮动窗口位置持久化。")
+                Toggle("离岛模式", isOn: $floatingMode)
+                    .help("也可在刘海上长按 0.35 秒后向下拖拽。浮窗位置会自动记忆，右键可回到刘海。")
+                    .onChange(of: floatingMode) { value in
+                        IslandDisplayModeStore.mode = value ? .floating : .notch
+                        NotificationCenter.default.post(name: AgentIslandSettingsKeys.settingsChanged, object: nil)
+                    }
                 roadmapLine("动态吉祥物", "每个引擎支持 idle / working / warning 三态。")
                 roadmapLine("声音提示", "开始、完成、需要审批、异常四类声音，默认关闭。")
             }
@@ -261,6 +268,14 @@ struct AgentSettingsView: View {
                     reinstallHooks()
                 }
             }
+
+            settingSection("提醒行为") {
+                Toggle("对应终端或 App 在前台时抑制自动展开", isOn: $smartSuppression)
+                    .help("状态仍会更新；只抑制大范围自动展开，手动点击和菜单操作不受影响。")
+                    .onChange(of: smartSuppression) { value in
+                        SmartSuppression.isEnabled = value
+                    }
+            }
         }
     }
 
@@ -326,11 +341,11 @@ struct AgentSettingsView: View {
     private var roadmapTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                settingSection("下一批必须补齐") {
-                    roadmapLine("PendingRequest", "把 approval / request_user_input / AskUserQuestion 做成结构化卡片。")
-                    roadmapLine("聊天详情", "Hook 事件驱动的完整对话和工具调用详情。")
+                settingSection("状态与交互主线") {
+                    roadmapLine("PendingRequest", "Claude 与 Codex 已支持经过验证的结构化问题/审批写回。")
+                    roadmapLine("聊天详情", "已支持按需读取本地 JSONL；下一步改为增量 Hook 事件存储。")
                     roadmapLine("僵尸检测", "pid/tmux pane 消失自动标记 ended。")
-                    roadmapLine("智能抑制", "用户正看着对应终端/窗口时不弹大提示。")
+                    roadmapLine("智能抑制", "对应终端/窗口在前台时已抑制自动展开，保留状态更新。")
                 }
                 settingSection("体验层") {
                     roadmapLine("离岛模式", "外接屏和多空间使用时让状态跟随当前工作屏。")

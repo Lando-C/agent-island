@@ -151,7 +151,7 @@ staged_app="$unpack_dir/$APP_NAME"
 codesign --verify --deep --strict "$staged_app"
 
 mkdir -p "$INSTALL_DIR"
-if pgrep -x AgentIsland >/dev/null 2>&1; then
+if [[ "$INSTALL_PATH" == "/Applications/$APP_NAME" ]] && pgrep -x AgentIsland >/dev/null 2>&1; then
   echo "Stopping the running Agent Island instance..."
   pkill -x AgentIsland || true
   for _ in 1 2 3 4 5; do

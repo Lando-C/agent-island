@@ -1,5 +1,7 @@
 # Agent Island
 
+[简体中文](README.zh-CN.md)
+
 Agent Island is a macOS Dynamic Island-style operations panel for AI agents.
 It is built for people running Codex, Claude Code, Claude Desktop, Claude
 Science, ChatGPT, terminal agents, and browser-based AI sessions at the same
@@ -60,6 +62,58 @@ The goal is not to show that an app is online. The goal is to answer:
 - Optional auto approval for safe read-only Claude PermissionRequest tools.
   It is off by default. Dangerous operations are never auto-approved.
 
+## Quick Install
+
+Requirements: macOS 13 or later. Published release bundles are universal for
+Apple Silicon and Intel Macs.
+
+Run the installer in Terminal:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Lando-C/agent-island/main/scripts/install)"
+```
+
+The installer downloads the newest non-draft GitHub Release, verifies the
+published SHA-256 checksum, installs the app at `/Applications/Agent Island.app`,
+backs up and installs Claude Code/Codex CLI hooks, and opens the app. It does not
+enable auto approval.
+
+To inspect the installer before running it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Lando-C/agent-island/main/scripts/install \
+  -o /tmp/agent-island-install
+less /tmp/agent-island-install
+bash /tmp/agent-island-install
+```
+
+Options:
+
+```bash
+bash /tmp/agent-island-install --version v0.1.0
+bash /tmp/agent-island-install --no-hooks
+bash /tmp/agent-island-install --no-open
+```
+
+Re-run the same command to update. The previous app is restored automatically
+if installation fails.
+
+## Manual Release Install
+
+1. Open [GitHub Releases](https://github.com/Lando-C/agent-island/releases).
+2. Download both `Agent-Island-macOS.zip` and `SHA256SUMS`.
+3. Verify the archive in Terminal:
+
+   ```bash
+   shasum -a 256 -c SHA256SUMS
+   ```
+
+4. Unzip the archive and move `Agent Island.app` to `/Applications`.
+5. This developer preview is not Apple-notarized yet. On first launch,
+   Control-click the app, choose **Open**, then confirm **Open**.
+6. In Agent Island, open **Settings > Diagnostics**, then install hooks and
+   grant only the permissions needed by the surfaces you use.
+
 ## Install From Source
 
 ```bash
@@ -96,7 +150,8 @@ Then open the status menu and use:
 3. Open `Settings...`.
 4. Grant Accessibility/Automation permissions if you want app/browser focusing
    and UI-based detection.
-5. Click `Reinstall Hooks` to install Claude Code and Codex CLI hooks.
+5. If you used the manual ZIP/source path, click `Reinstall Hooks` to install
+   Claude Code and Codex CLI hooks. The one-command installer already does this.
 6. Run `Diagnostics` and check the report.
 
 Missing optional tools such as tmux, WezTerm, kitty, Warp, cmux, or Kaku should
@@ -205,6 +260,22 @@ Command-line diagnostics:
 
 ```bash
 "/Applications/Agent Island.app/Contents/Resources/scripts/agent-island-diagnostics"
+```
+
+## Uninstall
+
+Remove Agent Island's hook entries before deleting the app. Other hooks are
+preserved and the configuration files are backed up first.
+
+```bash
+"/Applications/Agent Island.app/Contents/Resources/scripts/install-hooks" --uninstall
+rm -rf "/Applications/Agent Island.app"
+```
+
+Optional local runtime data removal:
+
+```bash
+rm -rf "$HOME/.agent-island"
 ```
 
 ## Product Direction

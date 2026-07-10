@@ -9,6 +9,14 @@ on:
       tag:
         description: Release tag, for example v0.1.0
         required: true
+      prerelease:
+        description: Publish as a public preview release
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
 
 jobs:
   package:
@@ -18,8 +26,29 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+
+      - name: Swift production tests
+        run: scripts/test-swift
+
+      - name: Reducer and interaction validation
+        run: |
+          scripts/validate-session-reducer
+          scripts/validate-expansion-controller
+          scripts/validate-codex-broker-probe
+
       - name: Build app bundle
-        run: scripts/build-app
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          AGENT_ISLAND_BUILD_NUMBER: ${{ github.run_number }}
+          AGENT_ISLAND_UNIVERSAL: "1"
+        run: |
+          export AGENT_ISLAND_VERSION="${RELEASE_TAG#v}"
+          scripts/build-app
 
       - name: Create zip
         run: |
@@ -34,3 +63,27 @@ jobs:
           path: |
             dist/Agent-Island-macOS.zip
             dist/SHA256SUMS
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          args=(
+            "$RELEASE_TAG"
+            "dist/Agent-Island-macOS.zip"
+            "dist/SHA256SUMS"
+            --title "Agent Island $RELEASE_TAG"
+            --generate-notes
+            --notes "Developer preview for macOS 13+. This build is not Apple-notarized yet; see the README for first-open and permission instructions."
+          )
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" \
+              dist/Agent-Island-macOS.zip dist/SHA256SUMS --clobber
+          else
+            gh release create "${args[@]}"
+          fi

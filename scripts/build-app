@@ -9,13 +9,29 @@ APP_DIR="$ROOT/dist/Agent Island.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
+VERSION="${AGENT_ISLAND_VERSION:-0.1.0}"
+BUILD_NUMBER="${AGENT_ISLAND_BUILD_NUMBER:-1}"
+
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+  echo "invalid AGENT_ISLAND_VERSION: $VERSION" >&2
+  exit 2
+}
+[[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]] || {
+  echo "invalid AGENT_ISLAND_BUILD_NUMBER: $BUILD_NUMBER" >&2
+  exit 2
+}
 
 cd "$ROOT"
-swift build -c release
+build_args=(-c release)
+if [[ "${AGENT_ISLAND_UNIVERSAL:-0}" == "1" ]]; then
+  build_args+=(--arch arm64 --arch x86_64)
+fi
+swift build "${build_args[@]}"
+binary_dir="$(swift build "${build_args[@]}" --show-bin-path)"
 
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS" "$RESOURCES"
-cp "$ROOT/.build/release/AgentIsland" "$MACOS/AgentIsland"
+cp "$binary_dir/AgentIsland" "$MACOS/AgentIsland"
 mkdir -p "$RESOURCES/scripts"
 cp -R "$ROOT/scripts/." "$RESOURCES/scripts/"
 find "$RESOURCES/scripts" -type d -name "__pycache__" -prune -exec rm -rf {} +
@@ -54,6 +70,9 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$CONTENTS/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS/Info.plist"
 
 if [[ -n "${AGENT_ISLAND_SIGNING_IDENTITY:-}" ]]; then
   codesign --force --deep --options runtime --sign "$AGENT_ISLAND_SIGNING_IDENTITY" "$APP_DIR"

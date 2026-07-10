@@ -9,6 +9,7 @@ BRIDGE="$ROOT/scripts/agent-island-bridge.py"
 
 install_claude=false
 install_codex=false
+uninstall=false
 
 if [[ $# -eq 0 ]]; then
   install_claude=true
@@ -20,15 +21,17 @@ for arg in "$@"; do
     --all) install_claude=true; install_codex=true ;;
     --claude) install_claude=true ;;
     --codex) install_codex=true ;;
+    --uninstall) uninstall=true; install_claude=true; install_codex=true ;;
     -h|--help)
       cat <<USAGE
-Usage: scripts/install-hooks [--all] [--claude] [--codex]
+Usage: scripts/install-hooks [--all] [--claude] [--codex] [--uninstall]
 
 Installs Agent Island hooks. By default the bridge is status-only: it writes
 lifecycle/tool/permission events to ~/.agent-island/events.jsonl and does not
 approve or deny actions. Optional auto approval is disabled unless explicitly
 enabled in ~/.agent-island/auto-approval.json, and dangerous tools are never
-auto-approved.
+auto-approved. --uninstall removes only Agent Island hook entries and preserves
+unrelated hooks.
 USAGE
       exit 0
       ;;
@@ -36,17 +39,22 @@ USAGE
   esac
 done
 
-chmod +x "$BRIDGE"
+if ! $uninstall; then
+  chmod +x "$BRIDGE"
+fi
 
 if $install_claude; then
   settings="$HOME/.claude/settings.json"
   mkdir -p "$(dirname "$settings")"
-  [[ -f "$settings" ]] || echo '{}' > "$settings"
+  if $uninstall && [[ ! -f "$settings" ]]; then
+    echo "Claude Code hooks already absent: $settings"
+  else
+    [[ -f "$settings" ]] || echo '{}' > "$settings"
   cp "$settings" "$settings.agent-island.bak"
 
-  python3 - "$settings" "$BRIDGE" <<'PY'
+  python3 - "$settings" "$BRIDGE" "$uninstall" <<'PY'
 import json, sys
-path, bridge = sys.argv[1], sys.argv[2]
+path, bridge, uninstall = sys.argv[1], sys.argv[2], sys.argv[3] == "true"
 cmd = f'"{bridge}" --source claude'
 with open(path, encoding="utf-8") as fh:
     data = json.load(fh)
@@ -76,25 +84,37 @@ for event, entry in events.items():
             next_item = dict(item)
             next_item["hooks"] = item_hooks
             cleaned.append(next_item)
-    cleaned.append(entry)
-    hooks[event] = cleaned
+    if not uninstall:
+        cleaned.append(entry)
+    if cleaned:
+        hooks[event] = cleaned
+    else:
+        hooks.pop(event, None)
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2, ensure_ascii=False)
 PY
-  echo "installed Claude Code hooks: $settings"
+    if $uninstall; then
+      echo "removed Agent Island Claude Code hooks: $settings"
+    else
+      echo "installed Claude Code hooks: $settings"
+    fi
+  fi
 fi
 
 if $install_codex; then
   hooks_file="$HOME/.codex/hooks.json"
   config_file="$HOME/.codex/config.toml"
   mkdir -p "$(dirname "$hooks_file")"
-  [[ -f "$hooks_file" ]] || echo '{"hooks":{}}' > "$hooks_file"
+  if $uninstall && [[ ! -f "$hooks_file" ]]; then
+    echo "Codex CLI hooks already absent: $hooks_file"
+  else
+    [[ -f "$hooks_file" ]] || echo '{"hooks":{}}' > "$hooks_file"
   cp "$hooks_file" "$hooks_file.agent-island.bak"
   [[ -f "$config_file" ]] && cp "$config_file" "$config_file.agent-island.bak" || true
 
-  python3 - "$hooks_file" "$BRIDGE" <<'PY'
+  python3 - "$hooks_file" "$BRIDGE" "$uninstall" <<'PY'
 import json, sys
-path, bridge = sys.argv[1], sys.argv[2]
+path, bridge, uninstall = sys.argv[1], sys.argv[2], sys.argv[3] == "true"
 cmd = f'"{bridge}" --source codex'
 try:
     with open(path, encoding="utf-8") as fh:
@@ -117,17 +137,21 @@ for event in events:
     hook = {"type": "command", "command": cmd}
     if event == "PermissionRequest":
         hook["timeout"] = 86400
-    cleaned.append({"matcher": "*", "hooks": [hook]})
-    hooks[event] = cleaned
+    if not uninstall:
+        cleaned.append({"matcher": "*", "hooks": [hook]})
+    if cleaned:
+        hooks[event] = cleaned
+    else:
+        hooks.pop(event, None)
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=2, ensure_ascii=False)
 PY
 
-  if command -v codex >/dev/null 2>&1; then
+  if ! $uninstall && command -v codex >/dev/null 2>&1; then
     codex features enable hooks >/dev/null 2>&1 || true
   fi
 
-  if ! codex features list 2>/dev/null | grep -E '^hooks[[:space:]]+' | grep -q 'true'; then
+  if ! $uninstall && ! codex features list 2>/dev/null | grep -E '^hooks[[:space:]]+' | grep -q 'true'; then
     python3 - "$config_file" <<'PY'
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -157,5 +181,10 @@ path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(text)
 PY
   fi
-  echo "installed Codex CLI hooks: $hooks_file"
+    if $uninstall; then
+      echo "removed Agent Island Codex CLI hooks: $hooks_file"
+    else
+      echo "installed Codex CLI hooks: $hooks_file"
+    fi
+  fi
 fi

@@ -19,7 +19,9 @@ This checklist is for turning the local app into a GitHub-downloadable product.
 
 ```bash
 cd agent-island
-swift build
+AGENT_ISLAND_VERSION=0.1.0 \
+AGENT_ISLAND_BUILD_NUMBER=1 \
+AGENT_ISLAND_UNIVERSAL=1 \
 scripts/build-app
 ```
 
@@ -57,6 +59,25 @@ Then verify:
 - `docs/PRODUCT_BLUEPRINT.md`: product direction.
 - `docs/CODEBASE_INTEGRATION_MATRIX.md`: reference-source integration plan.
 - `docs/RELEASE_CHECKLIST.md`: this release process.
+
+The `.github/workflows/release.yml` workflow validates the tag, runs production
+tests and reducer checks, builds a universal app, publishes both assets, and
+creates or updates the GitHub Release. Trigger it with:
+
+```bash
+gh workflow run release.yml -f tag=v0.1.0 -f prerelease=true
+```
+
+After publication, verify the public one-command installer in a temporary app
+destination before announcing the release:
+
+```bash
+AGENT_ISLAND_INSTALL_DIR="$HOME/Applications" \
+  bash scripts/install --version v0.1.0 --no-hooks --no-open
+```
+
+The installer must verify `SHA256SUMS`, reject missing assets or mismatches,
+and restore an existing app if replacement fails.
 
 ## Notarization Roadmap
 

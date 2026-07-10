@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Ling
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+REPOSITORY="${AGENT_ISLAND_REPOSITORY:-Lando-C/agent-island}"
+INSTALL_DIR="${AGENT_ISLAND_INSTALL_DIR:-/Applications}"
+APP_NAME="Agent Island.app"
+INSTALL_PATH="$INSTALL_DIR/$APP_NAME"
+RELEASE_TAG=""
+INSTALL_HOOKS=true
+OPEN_APP=true
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/install [options]
+
+Downloads a published Agent Island release, verifies SHA-256, installs the app,
+installs status hooks, and opens Agent Island.
+
+Options:
+  --version TAG   Install a specific release tag, for example v0.1.0.
+  --no-hooks      Do not install Claude Code and Codex CLI hooks.
+  --no-open       Do not open Agent Island after installation.
+  -h, --help      Show this help.
+
+Environment:
+  AGENT_ISLAND_REPOSITORY   GitHub owner/repo (default: Lando-C/agent-island).
+  AGENT_ISLAND_INSTALL_DIR  App destination directory (default: /Applications).
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --version)
+      [[ $# -ge 2 ]] || { echo "--version requires a tag" >&2; exit 2; }
+      RELEASE_TAG="$2"
+      shift 2
+      ;;
+    --no-hooks)
+      INSTALL_HOOKS=false
+      shift
+      ;;
+    --no-open)
+      OPEN_APP=false
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+if [[ -n "$RELEASE_TAG" && ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "invalid release tag: $RELEASE_TAG" >&2
+  exit 2
+fi
+
+[[ "$(uname -s)" == "Darwin" ]] || {
+  echo "Agent Island requires macOS 13 or later." >&2
+  exit 1
+}
+
+for command_name in curl ditto shasum python3; do
+  command -v "$command_name" >/dev/null 2>&1 || {
+    echo "required command not found: $command_name" >&2
+    exit 1
+  }
+done
+
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/agent-island-install.XXXXXX")"
+trap 'rm -rf "$tmp_dir"' EXIT
+
+if [[ -n "$RELEASE_TAG" ]]; then
+  api_url="https://api.github.com/repos/$REPOSITORY/releases/tags/$RELEASE_TAG"
+else
+  # Use the newest non-draft release, including public preview releases.
+  api_url="https://api.github.com/repos/$REPOSITORY/releases?per_page=20"
+fi
+
+echo "Finding Agent Island release from $REPOSITORY..."
+release_json="$tmp_dir/release.json"
+curl --fail --silent --show-error --location --retry 3 \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  "$api_url" > "$release_json"
+
+metadata="$(python3 - "$release_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    payload = json.load(handle)
+
+releases = payload if isinstance(payload, list) else [payload]
+release = next((item for item in releases if not item.get("draft")), None)
+if release is None:
+    raise SystemExit("no published Agent Island release found")
+
+assets = {item.get("name"): item.get("browser_download_url") for item in release.get("assets", [])}
+required = ["Agent-Island-macOS.zip", "SHA256SUMS"]
+missing = [name for name in required if not assets.get(name)]
+if missing:
+    raise SystemExit("release is missing required assets: " + ", ".join(missing))
+
+print(release.get("tag_name", "unknown"))
+print(assets["Agent-Island-macOS.zip"])
+print(assets["SHA256SUMS"])
+PY
+)"
+
+resolved_tag="$(printf '%s\n' "$metadata" | sed -n '1p')"
+archive_url="$(printf '%s\n' "$metadata" | sed -n '2p')"
+checksums_url="$(printf '%s\n' "$metadata" | sed -n '3p')"
+archive="$tmp_dir/Agent-Island-macOS.zip"
+checksums="$tmp_dir/SHA256SUMS"
+
+echo "Downloading Agent Island $resolved_tag..."
+curl --fail --silent --show-error --location --retry 3 "$archive_url" -o "$archive"
+curl --fail --silent --show-error --location --retry 3 "$checksums_url" -o "$checksums"
+
+expected_hash="$(awk '$2 == "Agent-Island-macOS.zip" { print $1; exit }' "$checksums")"
+actual_hash="$(shasum -a 256 "$archive" | awk '{ print $1 }')"
+[[ "$expected_hash" =~ ^[0-9a-fA-F]{64}$ ]] || {
+  echo "release checksum file is invalid" >&2
+  exit 1
+}
+expected_hash="$(printf '%s' "$expected_hash" | tr '[:upper:]' '[:lower:]')"
+actual_hash="$(printf '%s' "$actual_hash" | tr '[:upper:]' '[:lower:]')"
+[[ "$actual_hash" == "$expected_hash" ]] || {
+  echo "SHA-256 verification failed; refusing to install" >&2
+  exit 1
+}
+echo "SHA-256 verified."
+
+unpack_dir="$tmp_dir/unpacked"
+mkdir -p "$unpack_dir"
+ditto -x -k "$archive" "$unpack_dir"
+staged_app="$unpack_dir/$APP_NAME"
+[[ -x "$staged_app/Contents/MacOS/AgentIsland" ]] || {
+  echo "release archive does not contain a valid $APP_NAME" >&2
+  exit 1
+}
+codesign --verify --deep --strict "$staged_app"
+
+mkdir -p "$INSTALL_DIR"
+if pgrep -x AgentIsland >/dev/null 2>&1; then
+  echo "Stopping the running Agent Island instance..."
+  pkill -x AgentIsland || true
+  for _ in 1 2 3 4 5; do
+    pgrep -x AgentIsland >/dev/null 2>&1 || break
+    sleep 1
+  done
+fi
+
+backup_app="$tmp_dir/previous-$APP_NAME"
+if [[ -e "$INSTALL_PATH" ]]; then
+  mv "$INSTALL_PATH" "$backup_app" || {
+    echo "cannot replace $INSTALL_PATH; check directory permissions" >&2
+    exit 1
+  }
+fi
+
+if ! ditto "$staged_app" "$INSTALL_PATH"; then
+  rm -rf "$INSTALL_PATH"
+  [[ ! -e "$backup_app" ]] || mv "$backup_app" "$INSTALL_PATH"
+  echo "installation failed; the previous app was restored" >&2
+  exit 1
+fi
+
+if $INSTALL_HOOKS; then
+  "$INSTALL_PATH/Contents/Resources/scripts/install-hooks" --all
+fi
+
+if $OPEN_APP; then
+  open "$INSTALL_PATH"
+fi
+
+cat <<EOF
+
+Installed Agent Island $resolved_tag at:
+  $INSTALL_PATH
+
+Next steps:
+  1. Open Agent Island > Settings > Diagnostics.
+  2. Grant Accessibility when exact app/window focusing is needed.
+  3. Keep auto approval disabled until you review its Safety settings.
+EOF

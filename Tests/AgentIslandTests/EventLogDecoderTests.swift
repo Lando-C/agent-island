@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ling
 // SPDX-License-Identifier: MIT
 
-#if canImport(Testing)
+#if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 import Testing
 #elseif canImport(XCTest)
 import XCTest
@@ -11,7 +11,7 @@ import XCTest
 private let firstEventLine = #"{"agent":"claude","surface":"app","status":"working","session":"one","ts":1800000000}"#
 private let secondEventLine = #"{"agent":"codex","surface":"cli","status":"done","session":"two","ts":1800000001}"#
 
-#if canImport(Testing)
+#if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Event log decoder")
 struct EventLogDecoderTests {
     @Test("Complete JSONL records decode together")

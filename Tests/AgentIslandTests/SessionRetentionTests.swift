@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ling
 // SPDX-License-Identifier: MIT
 
-#if canImport(Testing)
+#if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 import Testing
 #elseif canImport(XCTest)
 import XCTest
@@ -74,7 +74,7 @@ private func lifecycleEvent(name: String, phase: AgentPhase, ts: Double, pid: In
     return resolved
 }
 
-#if canImport(Testing)
+#if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Session retention")
 struct SessionRetentionTests {
     @Test("Waiting approval remains visible within twelve hours")
@@ -273,6 +273,35 @@ final class SessionRetentionTests: XCTestCase {
         XCTAssertTrue(rollups.isEmpty)
     }
 
+    func testPromptedLifecycleCompletes() {
+        let now = 1_800_000_000.0
+        let rollups = AgentSessionStore.rollups(
+            from: [
+                lifecycleEvent(name: "SessionStart", phase: .queued, ts: now - 3),
+                lifecycleEvent(name: "UserPromptSubmit", phase: .queued, ts: now - 2),
+                lifecycleEvent(name: "Stop", phase: .done, ts: now - 1)
+            ],
+            now: now
+        )
+        XCTAssertEqual(rollups.values.first?.displayPhase, .done)
+    }
+
+    func testDuplicatePIDDoesNotReplaceRealCompletion() {
+        let now = 1_800_000_000.0
+        let rollups = AgentSessionStore.rollups(
+            from: [
+                lifecycleEvent(name: "SessionStart", phase: .queued, ts: now - 6, pid: 10),
+                lifecycleEvent(name: "UserPromptSubmit", phase: .queued, ts: now - 5, pid: 10),
+                lifecycleEvent(name: "Stop", phase: .done, ts: now - 4, pid: 10),
+                lifecycleEvent(name: "SessionStart", phase: .queued, ts: now - 2, pid: 20),
+                lifecycleEvent(name: "SessionEnd", phase: .done, ts: now - 1, pid: 20)
+            ],
+            now: now
+        )
+        XCTAssertEqual(rollups.values.first?.displayPhase, .done)
+        XCTAssertEqual(rollups.values.first?.displayEvent?.pid, 10)
+    }
+
     func testNewToolStartClearsCompletion() {
         let now = 1_800_000_000.0
         var preTool = workingEvent(ts: now - 1)
@@ -286,6 +315,21 @@ final class SessionRetentionTests: XCTestCase {
             now: now
         )
         XCTAssertEqual(rollups.values.first?.displayPhase, .working)
+    }
+
+    func testNewToolCompletionClearsCompletion() {
+        let now = 1_800_000_000.0
+        var postTool = workingEvent(ts: now - 1)
+        postTool.hookEvent = "posttooluse"
+        postTool.event.event = "PostToolUse"
+        let rollups = AgentSessionStore.rollups(
+            from: [
+                lifecycleEvent(name: "Stop", phase: .done, ts: now - 5),
+                postTool
+            ],
+            now: now
+        )
+        XCTAssertEqual(rollups.values.first?.displayPhase, .thinking)
     }
 }
 #endif

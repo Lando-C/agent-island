@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import Combine
-#if canImport(Testing)
+#if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 import Testing
 #elseif canImport(XCTest)
 import XCTest
@@ -41,7 +41,7 @@ private func pendingStoreFixture() -> (store: PendingRequestStore, snapshot: Age
     return (store, snapshot)
 }
 
-#if canImport(Testing)
+#if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Pending request store")
 struct PendingRequestStoreTests {
     @Test("Lookup does not publish during rendering")

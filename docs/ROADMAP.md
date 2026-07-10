@@ -24,6 +24,16 @@ Done:
   pending-request lookup.
 - Incremental JSONL event ingestion, bounded log-pruning headroom, semantic
   snapshot publication, and low-frequency activity motion.
+- Process-aware active-session expiry with a 30-second race grace, process-tree
+  family validation, Claude `--resume <session>` identity checks, and PID reuse
+  rejection.
+- No-op lifecycle suppression: `SessionStart -> SessionEnd` without prompt,
+  tool, or approval evidence cannot create a fake completed task or replace the
+  real session PID. New prompt/tool/approval evidence also clears an older
+  terminal state so an active next turn cannot remain labeled completed.
+- Claude App `cliSessionId -> localSessionId` metadata indexing with duplicate
+  import rejection and exact Accessibility focus when permission is granted.
+- Exact iTerm2/Terminal `windowID + tabIndex` focus before TTY/title fallback.
 
 Remaining:
 
@@ -31,12 +41,14 @@ Remaining:
 - Direct inline answer write-back for `request_user_input` once response schemas
   are verified. Current question cards show/copy options but do not claim to
   submit them.
-- Zombie detection for pid, process tree, terminal, and tmux pane liveness.
-- Transcript-aware fallback and process-aware expiry beyond the current
-  time-based retention policy.
+- Terminal and tmux pane liveness when no owning agent PID is available.
+- Transcript-aware fallback beyond the current metadata/title extraction.
 
 ## P1: Return to Work
 
+- Claude exact focus diagnostics and clearer in-row permission repair affordance
+  when Accessibility is not granted. The status menu already opens the relevant
+  System Settings pane.
 - Warp workspace/tab lookup.
 - cmux panel focusing.
 - Kaku focusing.

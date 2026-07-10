@@ -29,15 +29,18 @@ def reduce_phase(events: list[tuple[str, str]]) -> str:
         last = (event, tool)
 
         if event == "PreToolUse":
+            terminal = None
             active[tool] += 1
             attention = None
         elif event == "PostToolUse":
+            terminal = None
             if active[tool] > 1:
                 active[tool] -= 1
             else:
                 active.pop(tool, None)
             attention = None
         elif event in {"PermissionRequest", "PostToolUseFailure"}:
+            terminal = None
             if active[tool] > 1:
                 active[tool] -= 1
             else:
@@ -48,6 +51,7 @@ def reduce_phase(events: list[tuple[str, str]]) -> str:
             attention = None
             terminal = (event, tool)
         elif event == "UserPromptSubmit":
+            terminal = None
             attention = None
             queued = (event, tool)
 
@@ -89,6 +93,14 @@ def main() -> int:
         "new_work_clears_attention": (
             [("PermissionRequest", "Bash"), ("PreToolUse", "Read")],
             "working",
+        ),
+        "new_work_clears_completion": (
+            [("Stop", ""), ("PreToolUse", "Read")],
+            "working",
+        ),
+        "new_tool_result_clears_completion": (
+            [("Stop", ""), ("PostToolUse", "Read")],
+            "thinking",
         ),
     }
 

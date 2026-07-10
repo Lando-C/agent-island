@@ -71,6 +71,10 @@ scripts/build-app
 open "dist/Agent Island.app"
 ```
 
+`scripts/build-app` applies a stable local designated requirement so rebuilding
+does not create a new Accessibility identity on every run. Release builds should
+set `AGENT_ISLAND_SIGNING_IDENTITY` to a Developer ID Application identity.
+
 For local daily use, install the built app into `/Applications`:
 
 ```bash
@@ -98,6 +102,13 @@ Then open the status menu and use:
 Missing optional tools such as tmux, WezTerm, kitty, Warp, cmux, or Kaku should
 appear as capability warnings. They are not fatal unless you expect Agent Island
 to jump into those tools.
+
+Claude App session jumps use Claude's local `cliSessionId -> localSessionId`
+metadata and raise the window containing the exact local session URL. macOS
+Accessibility permission is required for this exact selection. Without it,
+Agent Island activates Claude but deliberately does not choose a random session;
+use `Open Accessibility Settings` from the status menu to grant permission. An
+authorization prompt is shown at most once per app launch.
 
 ## Hook Model
 

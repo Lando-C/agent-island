@@ -409,6 +409,8 @@ private enum AgentSnapshotSummary {
             return ["tmux", pane, socket, terminalDescription(tmux.terminal)]
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
+        case .claudeApp(let target):
+            return "Claude local=\(target.localSessionID) cli=\(target.cliSessionID)"
         }
     }
 
@@ -580,7 +582,7 @@ private enum AgentLauncher {
                 return
             }
             if !focusBundle("com.openai.chat") {
-                openBundle("com.openai.chat", fallbackPath: "/Applications/ChatGPT.app")
+                openBundle("com.openai.chat", fallbackPath: "/Applications/ChatGPT Classic.app")
             }
         }
     }
@@ -600,6 +602,8 @@ private enum AgentLauncher {
             return TerminalFocuser.focus(target)
         case .tmux(let target):
             return TerminalFocuser.focus(target)
+        case .claudeApp(let target):
+            return ClaudeAppFocuser.focus(target)
         case .app(let bundleID, let fallbackPath):
             if focusBundle(bundleID) {
                 return true
@@ -700,7 +704,7 @@ private enum AgentLauncher {
         switch family {
         case .codex:
             if !focusBundle("com.openai.codex") {
-                openBundle("com.openai.codex", fallbackPath: "/Applications/Codex.app")
+                openBundle("com.openai.codex", fallbackPath: "/Applications/ChatGPT.app")
             }
         case .claude:
             if !focusBundle("com.anthropic.claudefordesktop") {
@@ -712,7 +716,7 @@ private enum AgentLauncher {
             }
         case .chatgpt:
             if !focusBundle("com.openai.chat") {
-                openBundle("com.openai.chat", fallbackPath: "/Applications/ChatGPT.app")
+                openBundle("com.openai.chat", fallbackPath: "/Applications/ChatGPT Classic.app")
             }
         }
     }
@@ -1055,6 +1059,7 @@ final class AgentMonitor: ObservableObject {
     private var cachedClaudeScienceSummary = ClaudeScienceSummary()
     private var lastClaudeScienceScan = Date.distantPast
     private var cachedDiskConversationInfo: [String: ConversationInfo] = [:]
+    private var cachedClaudeAppSessions: [String: ClaudeAppSessionInfo] = [:]
     private var lastDiskConversationScan = Date.distantPast
     private var cachedRecentEvents: [AgentEvent] = []
     private var cachedEventLogSize: UInt64?
@@ -1141,7 +1146,7 @@ final class AgentMonitor: ObservableObject {
         let codexBrokerThreads = readCodexBrokerThreads()
         let codexBroker = summarizeCodexBrokerThreads(codexBrokerThreads)
         let science = readClaudeScienceSummaryCached(rows: rows)
-        let chatGPT = readChatGPTSummary(rows: rows)
+        let chatGPT = readChatGPTSummary()
         let claudeAppOwnsTasks = !claudeAppRows(from: rows).isEmpty
         let conversations = readConversationInfo(codexBrokerThreads: codexBrokerThreads)
         let eventSnapshots = makeEventSnapshots(from: events, conversations: conversations)
@@ -1236,7 +1241,9 @@ final class AgentMonitor: ObservableObject {
         }
         let appServer = appRows.contains { $0.command.contains("codex app-server") }
         let mainAppPID = appRows.first { row in
-            row.command.lowercased().contains("/applications/codex.app/contents/macos/codex")
+            let command = row.command.lowercased()
+            return command.contains("/applications/codex.app/contents/macos/codex")
+                || command.contains("/applications/chatgpt.app/contents/macos/chatgpt")
         }?.pid
         var snapshot = AgentSnapshot.empty(.codex, .app)
         snapshot.runningCount = max(goals.activeCount, broker.activeCount)
@@ -1351,6 +1358,8 @@ final class AgentMonitor: ObservableObject {
     private func isCodexAppProcess(_ command: String) -> Bool {
         let cmd = command.lowercased()
         return cmd.contains("/applications/codex.app/")
+            || cmd.contains("/applications/chatgpt.app/")
+            || cmd.contains("/library/application support/codex/")
             || cmd.contains("/contents/resources/codex app-server")
             || cmd.hasSuffix("/codex app-server")
             || cmd.contains(" codex app-server ")
@@ -1529,7 +1538,7 @@ final class AgentMonitor: ObservableObject {
         }
     }
 
-    private func readChatGPTSummary(rows: [ProcessRow]) -> ChatGPTSummary {
+    private func readChatGPTSummary() -> ChatGPTSummary {
         let now = Date()
         if now.timeIntervalSince(lastChatGPTScan) < 12 {
             return cachedChatGPTSummary
@@ -1538,16 +1547,18 @@ final class AgentMonitor: ObservableObject {
 
         var summary = ChatGPTSummary()
         let frontmost = frontmostProcessName()
-        let appRows = chatGPTAppRows(from: rows)
-        if !appRows.isEmpty {
+        let chatGPTApps = NSRunningApplication
+            .runningApplications(withBundleIdentifier: "com.openai.chat")
+            .filter { !$0.isTerminated }
+        if let app = chatGPTApps.first {
             summary.appPhase = .online
             summary.appDetail = "App 在线；未发现回答中信号"
-            summary.appPID = appRows.first { $0.command.contains("/Contents/MacOS/ChatGPT") }?.pid ?? appRows.first?.pid
-            summary.appPIDCount = appRows.count
+            summary.appPID = Int(app.processIdentifier)
+            summary.appPIDCount = chatGPTApps.count
             summary.appLastUpdated = now
 
-            if frontmost == "ChatGPT" {
-                let text = accessibilityText(forProcess: "ChatGPT")
+            if app.isActive {
+                let text = accessibilityText(forPID: app.processIdentifier)
                 let signal = classifyChatGPTUI(text)
                 switch signal {
                 case .working:
@@ -1604,15 +1615,6 @@ final class AgentMonitor: ObservableObject {
         applyChatGPTTransitions(to: &summary, now: now)
         cachedChatGPTSummary = summary
         return summary
-    }
-
-    private func chatGPTAppRows(from rows: [ProcessRow]) -> [ProcessRow] {
-        rows.filter { row in
-            let cmd = row.command.lowercased()
-            if cmd.contains("crashpad_handler") { return false }
-            return cmd.contains("/applications/chatgpt.app/")
-                || cmd.contains("/contents/macos/chatgpt")
-        }
     }
 
     private func applyChatGPTTransitions(to summary: inout ChatGPTSummary, now: Date) {
@@ -1768,6 +1770,48 @@ final class AgentMonitor: ObservableObject {
         return output
     }
 
+    private func accessibilityText(forPID pid: pid_t) -> String {
+        let source = """
+        tell application "System Events"
+            set matchingProcesses to every application process whose unix id is \(pid)
+            if (count of matchingProcesses) is 0 then return ""
+            set targetProcess to item 1 of matchingProcesses
+            tell targetProcess
+                if not (exists window 1) then return ""
+                set bits to {}
+                try
+                    set bits to bits & (name of every button of window 1)
+                end try
+                try
+                    set bits to bits & (description of every button of window 1)
+                end try
+                try
+                    set bits to bits & (value of every static text of window 1)
+                end try
+                try
+                    set bits to bits & (description of every UI element of window 1)
+                end try
+                try
+                    repeat with g in groups of window 1
+                        try
+                            set bits to bits & (name of every UI element of g)
+                        end try
+                        try
+                            set bits to bits & (description of every UI element of g)
+                        end try
+                    end repeat
+                end try
+                return bits as string
+            end tell
+        end tell
+        """
+        let output = runAppleScript(source)
+        if output.contains("not authorized") || output.contains("未获授权") {
+            return ""
+        }
+        return output
+    }
+
     private func classifyChatGPTUI(_ text: String) -> AgentPhase? {
         let value = text.lowercased()
         guard !value.isEmpty else { return nil }
@@ -1843,6 +1887,10 @@ final class AgentMonitor: ObservableObject {
             let recentSessions = recentEventSessionIDs()
             let claude = readClaudeConversationInfo(sessionIDs: recentSessions[.claude] ?? [])
             diskResult.merge(claude) { current, _ in current }
+            let claudeApp = readClaudeAppConversationInfo(sessionIDs: recentSessions[.claude] ?? [])
+            diskResult.merge(claudeApp) { current, incoming in
+                mergeConversationInfo(current: incoming, incoming: current)
+            }
             cachedDiskConversationInfo = diskResult
             lastDiskConversationScan = now
         }
@@ -1853,6 +1901,24 @@ final class AgentMonitor: ObservableObject {
             mergeConversationInfo(current: current, incoming: incoming)
         }
         return result
+    }
+
+    private func readClaudeAppConversationInfo(sessionIDs: Set<String>) -> [String: ConversationInfo] {
+        let support = home.appendingPathComponent("Library/Application Support/Claude")
+        let roots = [
+            support.appendingPathComponent("claude-code-sessions"),
+            support.appendingPathComponent("local-agent-mode-sessions")
+        ]
+        let sessions = ClaudeAppSessionIndex.load(roots: roots, matching: sessionIDs)
+        cachedClaudeAppSessions = sessions
+        return sessions.reduce(into: [String: ConversationInfo]()) { result, pair in
+            let (cliSessionID, info) = pair
+            result[conversationKey(.claude, cliSessionID)] = ConversationInfo(
+                title: ClaudeAppSessionIndex.displayTitle(for: info),
+                workspace: info.cwd,
+                preview: nil
+            )
+        }
     }
 
     private func readCodexBrokerThreads() -> [CodexBrokerThread] {
@@ -2372,7 +2438,10 @@ final class AgentMonitor: ObservableObject {
             eventCacheRequiresFullResolution = false
         }
 
-        return AgentSessionStore.rollups(from: cachedResolvedEvents, now: now)
+        let rollups = AgentSessionStore.rollups(from: cachedResolvedEvents, now: now)
+        return rollups.filter { _, rollup in
+            SessionLiveness.shouldRetain(rollup, processRows: rows, now: now)
+        }
     }
 
     private func resolvedEventDedupeKey(_ resolved: ResolvedAgentEvent) -> String {
@@ -2681,6 +2750,18 @@ final class AgentMonitor: ObservableObject {
         surface: AgentSurface,
         session: String?
     ) -> JumpTarget? {
+        if family == .claude,
+           surface == .app,
+           let session,
+           let info = cachedClaudeAppSessions[session] {
+            return .claudeApp(ClaudeAppJumpTarget(
+                cliSessionID: session,
+                localSessionID: info.sessionId,
+                title: info.title,
+                cwd: info.cwd
+            ))
+        }
+
         if family == .codex,
            surface == .app,
            let session,

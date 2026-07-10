@@ -158,10 +158,11 @@ fi
 section "Permissions"
 accessibility="$(osascript -e 'tell application "System Events" to UI elements enabled' 2>&1)"
 if [[ "$accessibility" == "true" ]]; then
-  status PASS "Accessibility" "UI scripting enabled"
+  status PASS "System Events UI scripting bridge" "enabled"
 else
-  status WARN "Accessibility" "$accessibility"
+  status WARN "System Events UI scripting bridge" "$accessibility"
 fi
+status INFO "Agent Island direct Accessibility" "per-app TCC cannot be verified by this CLI; use Open Accessibility Settings and ensure Agent Island is enabled"
 automation="$(osascript -e 'tell application "System Events" to count processes' 2>&1)"
 if [[ "$automation" =~ ^[0-9]+$ ]]; then
   status PASS "Apple Events / System Events" "process count=$automation"
@@ -222,7 +223,17 @@ for app in "iTerm2" "Terminal" "Ghostty" "WezTerm" "Warp" "kitty" "cmux" "Kaku";
 done
 
 section "Web/App Surfaces"
-for app in "Codex" "Claude" "Claude Science" "ChatGPT" "Google Chrome" "Safari"; do
+if pgrep -f '/Applications/Codex.app/' >/dev/null 2>&1 || pgrep -f '/Applications/ChatGPT.app/' >/dev/null 2>&1 || pgrep -f 'codex app-server' >/dev/null 2>&1; then
+  status PASS "running app: Codex" "com.openai.codex detected"
+else
+  status WARN "running app: Codex" "not running"
+fi
+if pgrep -f '/Applications/ChatGPT Classic.app/' >/dev/null 2>&1; then
+  status PASS "running app: ChatGPT" "com.openai.chat detected"
+else
+  status WARN "running app: ChatGPT" "not running"
+fi
+for app in "Claude" "Claude Science" "Google Chrome" "Safari"; do
   if pgrep -x "$app" >/dev/null 2>&1 || pgrep -f "/${app}.app/" >/dev/null 2>&1; then
     status PASS "running app: $app" "detected"
   else

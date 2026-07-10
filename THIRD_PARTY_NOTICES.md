@@ -13,6 +13,8 @@ open-source projects.
     `NSScreen.auxiliaryTopRightArea`
   - `NSScreen.displayId` helper
   - collection behavior pattern for all-spaces/full-screen auxiliary notch panels
+  - iTerm2 and Terminal exact `windowID + tabIndex` targeting before TTY/title
+    fallback
 
 MIT license text from DevIsland:
 

@@ -67,10 +67,13 @@ enum TerminalFocuser {
     }
 
     private static func focusITerm(_ target: TerminalJumpTarget) -> Bool {
+        // Exact window/tab targeting follows DevIsland's MIT-licensed focuser strategy.
         let ttyPath = normalizedTTY(target.tty)
         let ttyName = ttyPath?.components(separatedBy: "/").last ?? ""
         let sessionID = target.sessionIdentifier ?? ""
         let title = target.title ?? ""
+        let windowID = target.windowID ?? ""
+        let tabIndex = target.tabIndex ?? ""
         let script = """
         tell application id "com.googlecode.iterm2"
             activate
@@ -78,6 +81,34 @@ enum TerminalFocuser {
             set targetTTYName to \(appleScriptLiteral(ttyName))
             set targetSessionID to \(appleScriptLiteral(sessionID))
             set targetTitle to \(appleScriptLiteral(title))
+            set targetWindowID to \(appleScriptLiteral(windowID))
+            set targetTabIndex to \(appleScriptLiteral(tabIndex))
+            if targetWindowID is not "" and targetTabIndex is not "" then
+                try
+                    repeat with aWindow in windows
+                        if (id of aWindow as text) is targetWindowID then
+                            set aTab to tab (targetTabIndex as integer) of aWindow
+                            repeat with aSession in sessions of aTab
+                                set sessionTTY to ""
+                                set sessionIDText to ""
+                                try
+                                    set sessionTTY to tty of aSession
+                                end try
+                                try
+                                    set sessionIDText to id of aSession as text
+                                end try
+                                if (targetSessionID is not "" and sessionIDText is targetSessionID) or (targetTTY is not "" and (sessionTTY is targetTTY or sessionTTY is targetTTYName)) then
+                                    select aWindow
+                                    select aTab
+                                    select aSession
+                                    activate
+                                    return "focused"
+                                end if
+                            end repeat
+                        end if
+                    end repeat
+                end try
+            end if
             repeat with aWindow in windows
                 repeat with aTab in tabs of aWindow
                     repeat with aSession in sessions of aTab
@@ -113,11 +144,29 @@ enum TerminalFocuser {
         let ttyPath = normalizedTTY(target.tty)
         let ttyName = ttyPath?.components(separatedBy: "/").last ?? ""
         let title = target.title ?? ""
+        let windowID = target.windowID ?? ""
+        let tabIndex = target.tabIndex ?? ""
         let script = """
         tell application id "com.apple.Terminal"
             set targetTTY to \(appleScriptLiteral(ttyPath ?? ""))
             set targetTTYName to \(appleScriptLiteral(ttyName))
             set targetTitle to \(appleScriptLiteral(title))
+            set targetWindowID to \(appleScriptLiteral(windowID))
+            set targetTabIndex to \(appleScriptLiteral(tabIndex))
+            if targetWindowID is not "" and targetTabIndex is not "" then
+                try
+                    repeat with aWindow in windows
+                        if (id of aWindow as text) is targetWindowID then
+                            set targetTab to tab (targetTabIndex as integer) of aWindow
+                            set selected tab of aWindow to targetTab
+                            set selected of targetTab to true
+                            set index of aWindow to 1
+                            activate
+                            return "focused"
+                        end if
+                    end repeat
+                end try
+            end if
             repeat with aWindow in windows
                 repeat with aTab in tabs of aWindow
                     set tabTTY to ""

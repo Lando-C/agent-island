@@ -84,6 +84,10 @@ struct AgentSessionStore {
         var terminalTs: Double = 0
         var queuedEvent: AgentEvent?
         var queuedTs: Double = 0
+        var hasMeaningfulActivity = false
+        var lifecyclePID: Int?
+        var lifecycleHasMeaningfulActivity = false
+        var ignoredNoOpLifecycleEnd = false
 
         var activeToolCount: Int {
             activeToolCounts.values.reduce(0, +)
@@ -98,6 +102,7 @@ struct AgentSessionStore {
 
             switch resolved.hookEvent {
             case "pretooluse", "beforetool", "preinvocation":
+                markMeaningful(resolved.event, ts: resolved.ts)
                 incrementTool(resolved.event.tool)
                 clearAttention()
                 lastToolEvent = resolved.event
@@ -106,12 +111,14 @@ struct AgentSessionStore {
                 lastActiveEvent = resolved.event
                 lastActiveTs = resolved.ts
             case "posttooluse", "afteragent":
+                markMeaningful(resolved.event, ts: resolved.ts)
                 decrementTool(resolved.event.tool)
                 clearAttention()
                 lastToolEvent = resolved.event
                 lastToolHookEvent = resolved.hookEvent
                 lastToolTs = resolved.ts
             case "posttoolusefailure", "permissionrequest", "elicitation":
+                markMeaningful(resolved.event, ts: resolved.ts)
                 decrementTool(resolved.event.tool)
                 pendingAttentionEvent = resolved.event
                 pendingAttentionTs = resolved.ts
@@ -119,17 +126,40 @@ struct AgentSessionStore {
                 lastToolEvent = resolved.event
                 lastToolHookEvent = resolved.hookEvent
                 lastToolTs = resolved.ts
-            case "userpromptsubmit", "sessionstart", "startup", "init":
+            case "userpromptsubmit":
+                markMeaningful(resolved.event, ts: resolved.ts)
                 clearAttention()
                 queuedEvent = resolved.event
                 queuedTs = resolved.ts
-            case "stop", "sessionend", "postinvocation", "subagentstop":
+            case "sessionstart", "startup", "init":
+                lifecyclePID = resolved.event.pid
+                lifecycleHasMeaningfulActivity = false
+                ignoredNoOpLifecycleEnd = false
+                clearAttention()
+                queuedEvent = resolved.event
+                queuedTs = resolved.ts
+            case "sessionend":
+                if resolved.event.pid == lifecyclePID, !lifecycleHasMeaningfulActivity {
+                    if queuedEvent?.pid == lifecyclePID {
+                        queuedEvent = nil
+                        queuedTs = 0
+                    }
+                    ignoredNoOpLifecycleEnd = true
+                    break
+                }
+                activeToolCounts.removeAll()
+                clearAttention()
+                terminalEvent = resolved.event
+                terminalPhase = .completed
+                terminalTs = resolved.ts
+            case "stop", "postinvocation", "subagentstop":
                 activeToolCounts.removeAll()
                 clearAttention()
                 terminalEvent = resolved.event
                 terminalPhase = .completed
                 terminalTs = resolved.ts
             case "stopfailure":
+                markMeaningful(resolved.event, ts: resolved.ts)
                 activeToolCounts.removeAll()
                 pendingAttentionEvent = resolved.event
                 pendingAttentionTs = resolved.ts
@@ -142,21 +172,26 @@ struct AgentSessionStore {
         mutating private func applyPhaseFallback(_ resolved: ResolvedAgentEvent) {
             switch resolved.normalizedPhase {
             case .needsAttention:
+                markMeaningful(resolved.event, ts: resolved.ts)
                 pendingAttentionEvent = resolved.event
                 pendingAttentionTs = resolved.ts
                 pendingAttentionKind = .waitingApproval
             case .error:
+                markMeaningful(resolved.event, ts: resolved.ts)
                 pendingAttentionEvent = resolved.event
                 pendingAttentionTs = resolved.ts
                 pendingAttentionKind = .error
             case .working:
+                markMeaningful(resolved.event, ts: resolved.ts)
                 lastToolEvent = resolved.event
                 lastToolHookEvent = resolved.hookEvent
                 lastToolTs = resolved.ts
             case .queued:
+                markMeaningful(resolved.event, ts: resolved.ts)
                 queuedEvent = resolved.event
                 queuedTs = resolved.ts
             case .done:
+                markMeaningful(resolved.event, ts: resolved.ts)
                 terminalEvent = resolved.event
                 terminalPhase = .completed
                 terminalTs = resolved.ts
@@ -168,6 +203,19 @@ struct AgentSessionStore {
         private mutating func incrementTool(_ rawTool: String?) {
             let tool = normalizedTool(rawTool)
             activeToolCounts[tool, default: 0] += 1
+        }
+
+        private mutating func markMeaningful(_ event: AgentEvent, ts: Double) {
+            hasMeaningfulActivity = true
+            ignoredNoOpLifecycleEnd = false
+            if ts > terminalTs {
+                terminalEvent = nil
+                terminalPhase = nil
+                terminalTs = 0
+            }
+            if lifecyclePID == nil || lifecyclePID == event.pid {
+                lifecycleHasMeaningfulActivity = true
+            }
         }
 
         private mutating func decrementTool(_ rawTool: String?) {
@@ -198,6 +246,17 @@ struct AgentSessionStore {
 
         func rollup(now: Double) -> AgentEventRollup? {
             guard let latestEvent else { return nil }
+
+            if ignoredNoOpLifecycleEnd,
+               terminalEvent == nil,
+               pendingAttentionEvent == nil,
+               activeToolCount == 0,
+               queuedEvent == nil {
+                return nil
+            }
+            if terminalPhase == .completed, !hasMeaningfulActivity {
+                return nil
+            }
 
             let phaseInfo = currentPhase(now: now)
             guard now - phaseInfo.ts <= SessionRetentionPolicy.maxAge(for: phaseInfo.phase) else { return nil }

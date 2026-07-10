@@ -55,4 +55,14 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+if [[ -n "${AGENT_ISLAND_SIGNING_IDENTITY:-}" ]]; then
+  codesign --force --deep --options runtime --sign "$AGENT_ISLAND_SIGNING_IDENTITY" "$APP_DIR"
+else
+  # Keep a stable local designated requirement so Accessibility permission does
+  # not fall back to a new cdhash after every development build.
+  codesign --force --deep --sign - \
+    --requirements '=designated => identifier "local.agent-island"' \
+    "$APP_DIR"
+fi
+
 echo "$APP_DIR"

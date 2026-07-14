@@ -16,7 +16,12 @@ developer_dir="$(xcode-select -p 2>/dev/null || true)"
 test_flags=(--enable-xctest --disable-swift-testing -Xswiftc -DAGENT_ISLAND_USE_XCTEST)
 platform_path="$(xcrun --sdk macosx --show-sdk-platform-path 2>/dev/null || true)"
 if [[ -n "$platform_path" ]]; then
-  exec swift test "${test_flags[@]}"
+  if swift test --help | grep -q -- '--enable-xctest'; then
+    exec swift test "${test_flags[@]}"
+  fi
+  # Older Xcode SwiftPM does not expose the runner toggles. On that toolchain
+  # Swift Testing is unavailable, so `swift test` already runs XCTest.
+  exec swift test
 fi
 
 if [[ "$developer_dir" == "/Library/Developer/CommandLineTools" ]]; then

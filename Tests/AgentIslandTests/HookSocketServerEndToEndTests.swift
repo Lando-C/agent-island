@@ -13,7 +13,9 @@ import XCTest
 private func hookSocketApprovalRoundTrip() -> String? {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("agent-island-hook-\(UUID().uuidString)", isDirectory: true)
-    let socketPath = root.appendingPathComponent("hook.sock").path
+    // Unix-domain paths are capped near 104 bytes on macOS. XCTest temporary
+    // roots on hosted runners can exceed that before adding the socket name.
+    let socketPath = "/tmp/ai-hook-\(UUID().uuidString.prefix(8)).sock"
     defer { try? FileManager.default.removeItem(at: root) }
 
     let store = PendingRequestStore()

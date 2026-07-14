@@ -1014,6 +1014,8 @@ final class AgentMonitor: ObservableObject {
     private var lastTerminalLivenessScan = Date.distantPast
     private var cachedClaudeTaskSummary = ClaudeTaskSummary()
     private var lastClaudeTaskScan = Date.distantPast
+    private var cachedClaudeAppAuditActivities: [ClaudeAppAuditActivity] = []
+    private var lastClaudeAppAuditScan = Date.distantPast
     private var cachedCodexGoalSummary = CodexGoalSummary()
     private var lastCodexGoalScan = Date.distantPast
     private var cachedCodexTranscriptActivities: [CodexTranscriptActivity] = []
@@ -1037,6 +1039,7 @@ final class AgentMonitor: ObservableObject {
     private var chatGPTWebWasWorking = false
     private var chatGPTAppDoneUntil: Date?
     private var chatGPTWebDoneUntil: Date?
+    private var transcriptWatcher: SessionDirectoryWatcher?
 
     init(codexBrokerClient: CodexBrokerClient) {
         self.codexBrokerClient = codexBrokerClient
@@ -1076,10 +1079,31 @@ final class AgentMonitor: ObservableObject {
     }
 
     func start() {
+        startTranscriptWatcher()
         refreshAsync()
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.refreshAsync()
         }
+    }
+
+    private func startTranscriptWatcher() {
+        let support = home.appendingPathComponent("Library/Application Support/Claude")
+        transcriptWatcher = SessionDirectoryWatcher(paths: [
+            home.appendingPathComponent(".codex/sessions").path,
+            home.appendingPathComponent(".claude/projects").path,
+            support.appendingPathComponent("local-agent-mode-sessions").path,
+            support.appendingPathComponent("claude-code-sessions").path
+        ]) { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.lastCodexTranscriptScan = .distantPast
+                self.lastClaudeAppAuditScan = .distantPast
+                self.lastClaudeTaskScan = .distantPast
+                self.lastDiskConversationScan = .distantPast
+                self.refreshAsync()
+            }
+        }
+        transcriptWatcher?.start()
     }
 
     func refreshAsync() {
@@ -1114,11 +1138,13 @@ final class AgentMonitor: ObservableObject {
         let codexBrokerThreads = readCodexBrokerThreads()
         let codexBroker = summarizeCodexBrokerThreads(codexBrokerThreads)
         let codexTranscriptActivities = readCodexTranscriptActivitiesCached()
+        let claudeAppAuditActivities = readClaudeAppAuditActivitiesCached()
         let science = readClaudeScienceSummaryCached(rows: rows)
         let chatGPT = readChatGPTSummary()
         let conversations = readConversationInfo(codexBrokerThreads: codexBrokerThreads)
         let eventSnapshots = makeEventSnapshots(from: events, conversations: conversations)
         let transcriptSnapshots = makeCodexTranscriptSnapshots(codexTranscriptActivities, rows: rows)
+        let claudeAuditSnapshots = makeClaudeAppAuditSnapshots(claudeAppAuditActivities, rows: rows)
         let eventSurfaceIDs = Set(eventSnapshots.map(\.surfaceID))
         let appEventSurfaceIDs = Set(eventSnapshots.filter { $0.surface == .app }.map { "\($0.family.rawValue)-\($0.surface.rawValue)" })
 
@@ -1149,10 +1175,15 @@ final class AgentMonitor: ObservableObject {
                !transcriptSnapshots.isEmpty {
                 return false
             }
+            if snapshot.family == .claude,
+               snapshot.surface == .app,
+               !claudeAuditSnapshots.isEmpty {
+                return false
+            }
             return true
         }
 
-        let next = (eventSnapshots + transcriptSnapshots + fallbackSnapshots)
+        let next = (eventSnapshots + transcriptSnapshots + claudeAuditSnapshots + fallbackSnapshots)
             .sorted { lhs, rhs in
                 if lhs.phase.rank != rhs.phase.rank {
                     return lhs.phase.rank < rhs.phase.rank
@@ -1294,6 +1325,55 @@ final class AgentMonitor: ObservableObject {
             applyClaudeTasks(tasks, to: &snapshot, surfaceName: "Claude App")
         }
         return snapshot
+    }
+
+    private func readClaudeAppAuditActivitiesCached() -> [ClaudeAppAuditActivity] {
+        let now = Date()
+        if now.timeIntervalSince(lastClaudeAppAuditScan) >= 2 {
+            cachedClaudeAppAuditActivities = ClaudeAppAuditProbe.recentActivities(
+                root: home.appendingPathComponent("Library/Application Support/Claude/local-agent-mode-sessions"),
+                now: now
+            )
+            lastClaudeAppAuditScan = now
+        }
+        return cachedClaudeAppAuditActivities
+    }
+
+    private func makeClaudeAppAuditSnapshots(
+        _ activities: [ClaudeAppAuditActivity],
+        rows: [ProcessRow]
+    ) -> [AgentSnapshot] {
+        let appPID = claudeAppRows(from: rows).first?.pid
+        return activities.map { activity in
+            var snapshot = AgentSnapshot.empty(.claude, .app)
+            snapshot.sessionID = activity.cliSessionID
+            snapshot.phase = activity.phase
+            snapshot.title = "Claude App · \(activity.title)"
+            snapshot.detail = [activity.detail, activity.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+            snapshot.jumpTarget = .claudeApp(ClaudeAppJumpTarget(
+                cliSessionID: activity.cliSessionID,
+                localSessionID: activity.localSessionID,
+                title: activity.title,
+                cwd: activity.cwd
+            ))
+            snapshot.targetPID = appPID
+            snapshot.lastUpdated = activity.lastUpdated
+            switch activity.phase {
+            case .working, .thinking:
+                snapshot.runningCount = 1
+            case .needsAttention, .error:
+                snapshot.blockedCount = 1
+            case .queued:
+                snapshot.pendingCount = 1
+            case .done:
+                snapshot.completedCount = 1
+            case .online, .idle, .available, .offline:
+                break
+            }
+            return snapshot
+        }
     }
 
     private func makeClaudeCLI(rows: [ProcessRow]) -> AgentSnapshot {

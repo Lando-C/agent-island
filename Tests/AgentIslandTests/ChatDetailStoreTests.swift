@@ -68,6 +68,31 @@ private func codexTranscriptActivityFixture() -> Bool {
         && activity.detail == "工具: exec"
 }
 
+private func claudeAppAuditActivityFixture() -> Bool {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let info = ClaudeAppSessionInfo(
+        sessionId: "local_70266e98-3300-4871-8ec4-8edba1ee8a24",
+        cliSessionId: "70266e98-3300-4871-8ec4-8edba1ee8a24",
+        cwd: "/tmp/claude-app-workspace",
+        title: "Review Agent Island status accuracy",
+        lastFocusedAt: nil,
+        lastActivityAt: now.timeIntervalSince1970 * 1000
+    )
+    let log = """
+    {"type":"user","message":{"content":"Review the status detector"}}
+    {"type":"system","subtype":"status","status":"requesting"}
+    """
+    guard let activity = ClaudeAppAuditProbe.activity(
+        info: info,
+        data: Data(log.utf8),
+        modified: now,
+        now: now
+    ) else { return false }
+    return activity.phase == .working
+        && activity.title == "Review Agent Island status accuracy"
+        && activity.detail == "正在执行"
+}
+
 #if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Chat detail store")
 struct ChatDetailStoreTests {
@@ -90,6 +115,11 @@ struct ChatDetailStoreTests {
     func codexTranscriptActivity() {
         #expect(codexTranscriptActivityFixture())
     }
+
+    @Test("Claude app audit reports an active local-agent request")
+    func claudeAppAuditActivity() {
+        #expect(claudeAppAuditActivityFixture())
+    }
 }
 #elseif canImport(XCTest)
 final class ChatDetailStoreTests: XCTestCase {
@@ -107,6 +137,10 @@ final class ChatDetailStoreTests: XCTestCase {
 
     func testCodexTranscriptActivity() {
         XCTAssertTrue(codexTranscriptActivityFixture())
+    }
+
+    func testClaudeAppAuditActivity() {
+        XCTAssertTrue(claudeAppAuditActivityFixture())
     }
 }
 #endif

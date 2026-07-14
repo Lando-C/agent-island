@@ -661,6 +661,21 @@ def is_claude_cli(command: str) -> bool:
     )
 
 
+def is_auxiliary_claude_payload(source: str, payload: dict[str, Any]) -> bool:
+    """Do not publish claude-mem observer traffic as an interactive session."""
+    if source != "claude":
+        return False
+    text = " ".join(
+        str(payload.get(key, ""))
+        for key in ("cwd", "transcript_path", "title", "message", "prompt")
+    ).lower()
+    return (
+        "/.claude-mem/observer-sessions" in text
+        or "<observed_from_primary_session" in text
+        or "hello memory agent" in text
+    )
+
+
 def infer_surface(source: str, pid: int) -> str:
     commands = process_chain(pid)
     if source == "codex":
@@ -1036,6 +1051,11 @@ def main() -> int:
     payload = read_payload()
     source = infer_source(payload, args.source)
     event = event_name(payload, args.event)
+    if is_auxiliary_claude_payload(source, payload):
+        # This hook still needs a valid response, but it is internal service
+        # traffic and must not create a visible Agent Island session.
+        print(json.dumps(hook_response(source, event), separators=(",", ":")))
+        return 0
     phase, title, detail = classify(source, event, payload)
     frame = write_event(source, phase, title, detail, payload)
     if should_auto_allow(source, event, payload):

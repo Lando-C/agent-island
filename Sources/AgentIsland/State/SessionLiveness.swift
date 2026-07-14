@@ -54,7 +54,12 @@ enum SessionLiveness {
             result[row.pid] = row
         }
 
-        if hasExactSessionProcess(family: family, session: session, processRows: processRows) {
+        if hasExactSessionProcess(
+            family: family,
+            session: session,
+            processRows: processRows,
+            processMap: processMap
+        ) {
             return .live
         }
 
@@ -117,13 +122,17 @@ enum SessionLiveness {
     private static func hasExactSessionProcess(
         family: AgentFamily,
         session: String,
-        processRows: [ProcessRow]
+        processRows: [ProcessRow],
+        processMap: [Int: ProcessRow]
     ) -> Bool {
         guard family == .claude, UUID(uuidString: session) != nil else { return false }
         let spacedMarker = "--resume \(session)"
         let equalsMarker = "--resume=\(session)"
-        return processRows.contains {
-            $0.command.contains(spacedMarker) || $0.command.contains(equalsMarker)
+        return processRows.contains { row in
+            guard row.command.contains(spacedMarker) || row.command.contains(equalsMarker) else {
+                return false
+            }
+            return !isClaudeObserverChain(commandChain(startingAt: row.pid, processMap: processMap))
         }
     }
 
@@ -160,6 +169,9 @@ enum SessionLiveness {
         surface: AgentSurface,
         commands: [String]
     ) -> Bool {
+        if family == .claude, isClaudeObserverChain(commands) {
+            return false
+        }
         switch family {
         case .codex:
             let app = commands.contains(where: isCodexAppCommand)
@@ -177,6 +189,13 @@ enum SessionLiveness {
                     || $0.contains("com.openai.chat")
                     || $0.contains("chatgpt atlas.app")
             }
+        }
+    }
+
+    private static func isClaudeObserverChain(_ commands: [String]) -> Bool {
+        commands.contains { command in
+            command.contains("/.claude-mem/observer-sessions")
+                || (command.contains("claude-mem") && command.contains("worker-service"))
         }
     }
 

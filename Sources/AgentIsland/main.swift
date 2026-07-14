@@ -1113,7 +1113,6 @@ final class AgentMonitor: ObservableObject {
         let codexBroker = summarizeCodexBrokerThreads(codexBrokerThreads)
         let science = readClaudeScienceSummaryCached(rows: rows)
         let chatGPT = readChatGPTSummary()
-        let claudeAppOwnsTasks = !claudeAppRows(from: rows).isEmpty
         let conversations = readConversationInfo(codexBrokerThreads: codexBrokerThreads)
         let eventSnapshots = makeEventSnapshots(from: events, conversations: conversations)
         let eventSurfaceIDs = Set(eventSnapshots.map(\.surfaceID))
@@ -1122,8 +1121,10 @@ final class AgentMonitor: ObservableObject {
         let baseSnapshots = [
             makeCodexApp(rows: rows, goals: codexGoals, broker: codexBroker),
             makeCodexCLI(rows: rows),
-            makeClaudeApp(rows: rows, tasks: claudeAppOwnsTasks ? claudeTasks : nil),
-            makeClaudeCLI(rows: rows, tasks: claudeAppOwnsTasks ? nil : claudeTasks),
+            // Claude's on-disk task list is not a CLI activity signal. It may
+            // outlive a session, so only show it while the desktop app owns it.
+            makeClaudeApp(rows: rows, tasks: claudeAppRows(from: rows).isEmpty ? nil : claudeTasks),
+            makeClaudeCLI(rows: rows),
             makeClaudeScienceApp(rows: rows),
             makeClaudeScienceRuntime(rows: rows, summary: science),
             makeChatGPTApp(summary: chatGPT),
@@ -1286,8 +1287,10 @@ final class AgentMonitor: ObservableObject {
         return snapshot
     }
 
-    private func makeClaudeCLI(rows: [ProcessRow], tasks: ClaudeTaskSummary?) -> AgentSnapshot {
-        let cliRows = rows.filter { isClaudeCLIProcess($0.command) }
+    private func makeClaudeCLI(rows: [ProcessRow]) -> AgentSnapshot {
+        let cliRows = rows.filter {
+            isClaudeCLIProcess($0.command) && !isClaudeObserverProcess($0, in: rows)
+        }
 
         var snapshot = AgentSnapshot.empty(.claude, .cli)
         if !cliRows.isEmpty {
@@ -1299,15 +1302,31 @@ final class AgentMonitor: ObservableObject {
             snapshot.phase = .available
             snapshot.detail = "CLI 已安装，未检测到任务事件"
         }
-        if let tasks {
-            applyClaudeTasks(tasks, to: &snapshot, surfaceName: "Claude CLI")
-        }
         if !cliRows.isEmpty {
             snapshot.targetPID = cliRows.first?.pid
             snapshot.pidCount = cliRows.count
         }
 
         return snapshot
+    }
+
+    private func isClaudeObserverProcess(_ row: ProcessRow, in rows: [ProcessRow]) -> Bool {
+        let processMap = rows.reduce(into: [Int: ProcessRow]()) { result, candidate in
+            result[candidate.pid] = candidate
+        }
+        var candidate: ProcessRow? = row
+        var visited = Set<Int>()
+        for _ in 0..<10 {
+            guard let current = candidate, visited.insert(current.pid).inserted else { break }
+            let command = current.command.lowercased()
+            if command.contains("/.claude-mem/observer-sessions")
+                || (command.contains("claude-mem") && command.contains("worker-service")) {
+                return true
+            }
+            guard let parentPID = current.ppid, parentPID != current.pid else { break }
+            candidate = processMap[parentPID]
+        }
+        return false
     }
 
     private func claudeAppRows(from rows: [ProcessRow]) -> [ProcessRow] {
@@ -2307,13 +2326,10 @@ final class AgentMonitor: ObservableObject {
         family: AgentFamily,
         phase: AgentPhase
     ) -> Bool {
-        guard isAuxiliaryAgentEvent(event, family: family) else { return false }
-        switch phase {
-        case .needsAttention, .error:
-            return false
-        case .working, .thinking, .queued, .done, .online, .idle, .available, .offline:
-            return true
-        }
+        // claude-mem observer sessions are service plumbing. Even an internal
+        // permission/failure must not be presented as a user action item.
+        _ = phase
+        return isAuxiliaryAgentEvent(event, family: family)
     }
 
     private func eventRollups(
@@ -2941,7 +2957,10 @@ final class AgentMonitor: ObservableObject {
         for case let url as URL in enumerator {
             guard url.pathExtension == "json" else { continue }
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
-            guard now.timeIntervalSince(modified) < 14 * 24 * 60 * 60 else { continue }
+            // Task JSON is a persistent backlog, not a liveness signal. Without
+            // a fresh write it cannot truthfully represent current work or a
+            // currently actionable approval.
+            guard now.timeIntervalSince(modified) < 30 * 60 else { continue }
             guard let data = try? Data(contentsOf: url),
                   let task = try? decoder.decode(ClaudeTask.self, from: data) else {
                 continue

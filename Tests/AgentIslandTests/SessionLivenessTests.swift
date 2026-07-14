@@ -107,6 +107,18 @@ struct SessionLivenessTests {
         #expect(SessionLiveness.verdict(for: rollup, processRows: rows, now: now) == .live)
     }
 
+    @Test("Claude memory observer does not keep a visible CLI session alive")
+    func claudeMemoryObserverIsNotLiveOwner() {
+        let now = 1_800_000_000.0
+        let rollup = livenessRollup(pid: 777, ts: now - 120)
+        let rows = [
+            ProcessRow(pid: 777, ppid: 778, command: "/usr/local/bin/claude --resume \(livenessSessionID)"),
+            ProcessRow(pid: 778, ppid: 1, command: "bun /plugins/claude-mem/scripts/worker-service.cjs --daemon")
+        ]
+
+        #expect(SessionLiveness.verdict(for: rollup, processRows: rows, now: now) == .dead)
+    }
+
     @Test("Reused PID from another app is not treated as the agent")
     func reusedPIDFromAnotherAppIsDead() {
         let now = 1_800_000_000.0
@@ -218,6 +230,16 @@ final class SessionLivenessTests: XCTestCase {
             command: "/Applications/Claude.app/Contents/Helpers/disclaimer --resume \(xctLivenessSessionID)"
         )]
         XCTAssertEqual(SessionLiveness.verdict(for: rollup, processRows: rows, now: now), .live)
+    }
+
+    func testClaudeMemoryObserverDoesNotKeepVisibleCLISessionAlive() {
+        let now = 1_800_000_000.0
+        let rollup = xctLivenessRollup(pid: 777, ts: now - 120)
+        let rows = [
+            ProcessRow(pid: 777, ppid: 778, command: "/usr/local/bin/claude --resume \(xctLivenessSessionID)"),
+            ProcessRow(pid: 778, ppid: 1, command: "bun /plugins/claude-mem/scripts/worker-service.cjs --daemon")
+        ]
+        XCTAssertEqual(SessionLiveness.verdict(for: rollup, processRows: rows, now: now), .dead)
     }
 
     func testReusedPIDFromAnotherAppIsDead() {

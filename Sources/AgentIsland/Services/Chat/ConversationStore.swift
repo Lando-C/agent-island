@@ -394,6 +394,11 @@ enum ConversationTranscriptParser {
         let fragment: String
         if text.hasSuffix("\n") {
             fragment = ""
+            // `split(..., omittingEmptySubsequences: false)` includes a synthetic
+            // empty element after a trailing newline. It is not a JSONL record.
+            if lines.last?.isEmpty == true {
+                lines.removeLast()
+            }
         } else {
             fragment = lines.popLast().map(String.init) ?? ""
         }

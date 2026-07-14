@@ -21,7 +21,7 @@ jobs:
         run: swift build
 
       - name: Swift production tests
-        run: scripts/test-swift
+        run: scripts/test-swift --require-xctest
 
       - name: Python syntax
         run: python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe

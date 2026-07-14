@@ -14,6 +14,7 @@ enum IslandDisplayModeStore {
     private static let floatingXKey = "agentIsland.display.floatingX"
     private static let floatingYKey = "agentIsland.display.floatingY"
     private static let floatingOriginsKey = "agentIsland.display.floatingOrigins"
+    private static let lastFloatingDisplayIDKey = "agentIsland.display.lastFloatingDisplayID"
 
     static var mode: IslandDisplayMode {
         get { IslandDisplayMode(rawValue: UserDefaults.standard.string(forKey: modeKey) ?? "") ?? .notch }
@@ -56,6 +57,12 @@ enum IslandDisplayModeStore {
         var origins = UserDefaults.standard.dictionary(forKey: floatingOriginsKey) ?? [:]
         origins[String(screen.displayId)] = ["x": origin.x, "y": origin.y]
         UserDefaults.standard.set(origins, forKey: floatingOriginsKey)
+        UserDefaults.standard.set(Int(screen.displayId), forKey: lastFloatingDisplayIDKey)
         floatingOrigin = origin
+    }
+
+    static var lastFloatingDisplayID: UInt32? {
+        guard UserDefaults.standard.object(forKey: lastFloatingDisplayIDKey) != nil else { return nil }
+        return UInt32(UserDefaults.standard.integer(forKey: lastFloatingDisplayIDKey))
     }
 }

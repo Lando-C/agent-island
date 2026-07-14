@@ -217,6 +217,11 @@ final class PanelCoordinator: NSObject {
     }
 
     private func preferredScreen(for panel: NSPanel) -> NSScreen? {
+        if displayMode == .floating,
+           let displayID = IslandDisplayModeStore.lastFloatingDisplayID,
+           let restored = NSScreen.screens.first(where: { $0.displayId == displayID }) {
+            return restored
+        }
         if displayMode == .floating, let current = panel.screen { return current }
         return NSScreen.main ?? panel.screen
     }

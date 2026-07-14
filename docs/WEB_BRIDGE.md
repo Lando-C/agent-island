@@ -10,10 +10,14 @@ Island app running on the same Mac.
 - Every request requires a random per-install bearer token stored locally at
   `~/.agent-island/web-bridge-token` with owner-only permissions.
 - The extension sends only engine name, page-derived session key, title, phase,
-  and URL path. It does not send page text, prompts, replies, tool input, or
-  cookies.
+  a fixed detector summary, and URL path. It does not send page text, prompts,
+  replies, tool input, query parameters, or cookies.
 - Web-page state is a DOM heuristic. Agent Island labels it `网页桥接`; it is
   not equivalent to a CLI Hook or an app transcript confirmation.
+- Extension v0.2 detects only visible stop-generation controls and actual modal
+  approval controls. It deliberately does not scan conversation text for words
+  such as “allow” or “approve”, preventing a normal prompt/reply from being
+  reported as a human handoff.
 
 ## Install the extension
 

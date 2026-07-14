@@ -73,6 +73,65 @@ private func hookSocketApprovalRoundTrip() -> String? {
     return nil
 }
 
+private func hookSocketQuestionRoundTrip() -> String? {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-island-question-\(UUID().uuidString)", isDirectory: true)
+    let socketPath = "/tmp/ai-question-\(UUID().uuidString.prefix(8)).sock"
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = PendingRequestStore()
+    let health = TransportHealthStore(outputURL: root.appendingPathComponent("transport.json"))
+    let stateQueue = DispatchQueue(label: "local.agent-island.question-test-state")
+    let server = HookSocketServer(
+        store: store,
+        health: health,
+        socketPath: socketPath,
+        callbackQueue: stateQueue
+    )
+    server.start()
+    guard waitUntil(timeout: 2, condition: { FileManager.default.fileExists(atPath: socketPath) }) else {
+        server.stop()
+        return "question listener socket was not created"
+    }
+
+    let response = LockedData()
+    let request = Data(#"{"source":"claude","surface":"cli","event":"PreToolUse","session":"socket-session","request_id":"question-request","question":"Choose scope","questions":[{"id":"scope","prompt":"Choose scope","options":["Current task","All tasks"],"multiSelect":false,"isSecret":false,"allowsOther":true}],"tool_input_json":"{\"questions\":[{\"question\":\"Choose scope\"}]}","response_schema":"claude_pre_tool_ask_user_question","ts":1800000000}"#.utf8)
+    DispatchQueue.global(qos: .userInitiated).async {
+        guard let fd = connectUnixSocket(socketPath) else { return }
+        defer { close(fd) }
+        _ = request.withUnsafeBytes { send(fd, $0.baseAddress, request.count, 0) }
+        _ = shutdown(fd, SHUT_WR)
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let count = recv(fd, &buffer, buffer.count, 0)
+        if count > 0 { response.set(Data(buffer.prefix(count))) }
+    }
+
+    let pending = waitUntil(timeout: 2, condition: {
+        stateQueue.sync { store.requests.first?.id == "claude::question-request" }
+    }) ? stateQueue.sync { store.requests.first } : nil
+    guard let pending else {
+        server.stop()
+        return "question request did not reach the store"
+    }
+    stateQueue.sync { store.answer(pending, answers: ["scope": ["Current task"]]) }
+    let completed = waitUntil(timeout: 2, condition: { !response.value.isEmpty })
+    server.stop()
+
+    guard completed,
+          let rootJSON = try? JSONSerialization.jsonObject(with: response.value) as? [String: Any],
+          let output = rootJSON["hookSpecificOutput"] as? [String: Any],
+          output["permissionDecision"] as? String == "allow",
+          let updatedInput = output["updatedInput"] as? [String: Any],
+          let answers = updatedInput["answers"] as? [String: String],
+          answers["Choose scope"] == "Current task" else {
+        return "question answer did not return the expected PreToolUse payload"
+    }
+    guard stateQueue.sync(execute: { store.requests.first?.status == .answered }) else {
+        return "store did not retain answered status"
+    }
+    return nil
+}
+
 private func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
@@ -135,11 +194,20 @@ struct HookSocketServerEndToEndTests {
     func approvalRoundTrip() {
         #expect(hookSocketApprovalRoundTrip() == nil)
     }
+
+    @Test("Claude question answers return through the live socket")
+    func questionRoundTrip() {
+        #expect(hookSocketQuestionRoundTrip() == nil)
+    }
 }
 #elseif canImport(XCTest)
 final class HookSocketServerEndToEndTests: XCTestCase {
     func testClaudeApprovalReturnsResponseThroughLiveSocket() {
         XCTAssertNil(hookSocketApprovalRoundTrip())
+    }
+
+    func testClaudeQuestionAnswersReturnThroughLiveSocket() {
+        XCTAssertNil(hookSocketQuestionRoundTrip())
     }
 }
 #endif

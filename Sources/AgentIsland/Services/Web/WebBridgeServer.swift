@@ -4,26 +4,68 @@
 import Darwin
 import Foundation
 
+struct BrowserBridgePayload: Decodable {
+    var version: Int
+    var source: String
+    var sessionID: String?
+    var title: String?
+    var phase: String
+    var detail: String?
+    var url: String?
+
+    enum CodingKeys: String, CodingKey {
+        case version, source, title, phase, detail, url
+        case sessionID = "session_id"
+    }
+}
+
+enum BrowserBridgeProtocol {
+    static func accepts(version: Int) -> Bool {
+        version == 1 || version == 2
+    }
+
+    static func normalized(source: String, phase: String) -> (family: String, phase: String)? {
+        let sourceValue = source.lowercased()
+        let family: String
+        if sourceValue.contains("codex") {
+            family = "codex"
+        } else if sourceValue.contains("claude") {
+            family = "claude"
+        } else if sourceValue.contains("chatgpt") || sourceValue.contains("openai") {
+            family = "chatgpt"
+        } else {
+            return nil
+        }
+
+        let phaseValue = phase.lowercased().replacingOccurrences(of: "_", with: "")
+        switch phaseValue {
+        case "working", "thinking", "queued", "done", "needsattention", "idle", "online":
+            return (family, phase.lowercased())
+        default:
+            return nil
+        }
+    }
+
+    static func fallbackSession(family: String, url: String?) -> String {
+        guard let url, !url.isEmpty else { return "web-\(family)" }
+        return "web-\(stableIdentifier(url))"
+    }
+
+    private static func stableIdentifier(_ value: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100000001b3
+        }
+        return String(hash, radix: 16)
+    }
+}
+
 /// Receives minimal status frames from the optional browser extension.
 /// It binds only to loopback and requires a per-install bearer token.
 final class WebBridgeServer {
     static let port: UInt16 = 27583
     static let healthID = "web-bridge"
-
-    private struct Payload: Decodable {
-        var version: Int
-        var source: String
-        var sessionID: String?
-        var title: String?
-        var phase: String
-        var detail: String?
-        var url: String?
-
-        enum CodingKeys: String, CodingKey {
-            case version, source, title, phase, detail, url
-            case sessionID = "session_id"
-        }
-    }
 
     private let root: URL
     private let health: TransportHealthStore
@@ -146,20 +188,21 @@ final class WebBridgeServer {
             writeResponse(401, "unauthorized", to: client)
             return
         }
-        guard let payload = try? JSONDecoder().decode(Payload.self, from: request.body), payload.version == 1,
-              let family = normalizedFamily(payload.source), let phase = normalizedPhase(payload.phase) else {
+        guard let payload = try? JSONDecoder().decode(BrowserBridgePayload.self, from: request.body),
+              BrowserBridgeProtocol.accepts(version: payload.version),
+              let normalized = BrowserBridgeProtocol.normalized(source: payload.source, phase: payload.phase) else {
             writeResponse(422, "invalid event", to: client)
             return
         }
-        append(payload: payload, family: family, phase: phase)
+        append(payload: payload, family: normalized.family, phase: normalized.phase)
         health.markEvent(id: Self.healthID, name: "Browser Web Bridge")
         writeResponse(202, "accepted", to: client)
         DispatchQueue.main.async { [onEvent] in onEvent() }
     }
 
-    private func append(payload: Payload, family: String, phase: String) {
+    private func append(payload: BrowserBridgePayload, family: String, phase: String) {
         let session = payload.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallback = payload.url.map { "web-\(stableIdentifier($0))" } ?? "web-\(family)"
+        let fallback = BrowserBridgeProtocol.fallbackSession(family: family, url: payload.url)
         let frame: [String: Any] = [
             "agent": family,
             "surface": "web",
@@ -222,32 +265,6 @@ final class WebBridgeServer {
         var bytes = [UInt8](repeating: 0, count: 32)
         _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
         return bytes.map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func normalizedFamily(_ source: String) -> String? {
-        let value = source.lowercased()
-        if value.contains("chatgpt") || value.contains("openai") { return "chatgpt" }
-        if value.contains("claude") { return "claude" }
-        if value.contains("codex") { return "codex" }
-        return nil
-    }
-
-    private func normalizedPhase(_ phase: String) -> String? {
-        switch phase.lowercased().replacingOccurrences(of: "_", with: "") {
-        case "working", "thinking", "queued", "done", "needsattention", "idle", "online": return phase.lowercased()
-        default: return nil
-        }
-    }
-
-    private func stableIdentifier(_ value: String) -> String {
-        // Do not use Swift's randomized hash here: the same browser URL must
-        // retain its identity after an Agent Island restart.
-        var hash: UInt64 = 0xcbf29ce484222325
-        for byte in value.utf8 {
-            hash ^= UInt64(byte)
-            hash &*= 0x100000001b3
-        }
-        return String(hash, radix: 16)
     }
 
     private func compact(_ value: String?, limit: Int) -> String {

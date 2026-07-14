@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Agent Island Web Bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Sends minimal local AI web-session status to Agent Island on this Mac.",
   "permissions": ["storage"],
   "host_permissions": ["http://127.0.0.1:27583/*"],

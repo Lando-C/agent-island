@@ -2,6 +2,10 @@
 
 日期：2026-07-09
 
+> 实现状态已于 2026-07-14 同步。原始规划中标为“待做”的部分已有推进；请以
+> `README.md`、`docs/ROADMAP.md` 和运行中的 Diagnostics 为准。这里保留的是
+> 产品原则与参考架构，不作为实时功能清单。
+
 ## 定位
 
 Agent Island 不是通用 Dynamic Island，也不是单一 Claude/Codex mascot。它应该是：

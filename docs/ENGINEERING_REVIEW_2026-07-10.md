@@ -3,9 +3,10 @@
 ## Executive judgment
 
 Agent Island now has a credible product core: session-first status, direct Claude
-question/approval responses, conditional Codex Desktop responses, local chat
-details, precise jump targets, smart spotlight suppression, diagnostics, and an
-installable macOS app. It is no longer only a process-online indicator.
+question/approval responses, conditional Codex Desktop responses, shared
+incremental local chat details, precise jump targets, smart spotlight
+suppression, diagnostics, and an installable macOS app. It is no longer only a
+process-online indicator.
 
 It is not yet a finished 1.0 control plane. The largest remaining risks are
 transport coverage, source attribution, exact foreground matching across every
@@ -19,10 +20,10 @@ floating-island MVP and the intended detached companion experience.
 | Claude approval | Unix hook socket returns verified `PermissionRequest` output | Unit tests plus live allow/deny path | Other Claude hooks can coexist and produce follow-up events | Production-capable, fail-closed |
 | Claude questions | `AskUserQuestion` preserves original questions and writes `answers`; Elicitation returns structured content | Live option and custom-text end-to-end tests | Future Claude schema changes need fixtures | Strong |
 | Codex Desktop control | Persistent `cxc-*/broker.sock` JSON-RPC client retains server request IDs | Generated local app-server schema plus payload tests | No active broker was available for live E2E; Codex CLI stdio sessions are not intercepted | Conditional, accurately disclosed |
-| Chat details | On-demand Claude/Codex JSONL parser with messages and tool calls | Real Claude transcript UI test | Not yet an incremental event store; unsupported app/web chats remain unavailable | Useful MVP |
+| Chat details | Shared incremental Claude/Codex JSONL tailer plus Hook and broker events | Transcript and parser tests | Unsupported app/web chats remain unavailable; recent-tail cap is shown to the user | Useful MVP |
 | Smart suppression | App, ChatGPT active tab, TTY, cmux and tmux target checks | Classifier tests and live frontmost suppression logs | Warp/kitty/Kaku exact active-pane checks remain incomplete | Conservative after hardening |
 | Terminal jump | iTerm2, Terminal, Ghostty, WezTerm, kitty, cmux and tmux fallbacks | Existing focus code plus live app/session checks | Some terminals expose weak automation APIs | Broad but not uniformly exact |
-| Off-island mode | Long press/down drag, movable panel, saved position, context-menu return | Live detach/restart/right-click/return tests | Still a floating capsule, not a compact independent companion | MVP, not final mascot system |
+| Off-island mode | Long press/down drag, movable panel, saved position, context-menu return, compact status bubble | Live detach/restart/right-click/return tests | Still needs per-engine mascot assets and broader display layout regression | MVP, not final mascot system |
 | Packaging | Public repository, release archive, checksum installer, app bundle | Anonymous installer and CI | No Developer ID notarization or Homebrew cask | Developer preview |
 
 ## What was weak and is now corrected
@@ -66,8 +67,9 @@ floating-island MVP and the intended detached companion experience.
   panel placement, and application lifecycle. This increases regression risk.
 - `AgentSnapshot` mixes display projection with transport identity and counters.
   A durable session model should project into a smaller view model.
-- Chat history is parsed per detail window. A session-indexed actor/store should
-  tail changed files and publish deltas.
+- Conversation history is shared through `ConversationStore`; next, provider
+  adapters should populate it from safe app/web event APIs instead of more file
+  scanning.
 - Foreground detection is distributed between monitor probes, launcher code, and
   smart suppression. These should share one target-inspection service.
 - Codex broker discovery and one-shot broker probing duplicate connection and
@@ -128,14 +130,17 @@ tested behavior remain the deciding factors.
 
 ### P0 - Reliability and observability
 
-1. Build an incremental `ConversationStore` keyed by provider/session.
-2. Merge Codex broker client and thread probe around one versioned RPC core.
-3. Add transport health and last-success timestamps to diagnostics.
-4. Add fixture replay tests for Claude/Codex schema versions and disconnects.
-5. Add process/tmux-aware zombie termination with an explicit grace period.
+1. Capture redacted live Codex broker schema fixtures and replay them against
+   the persistent RPC client.
+2. Add Browser Bridge selector fixtures and provider-version degradation
+   reporting.
+3. Expand terminal focus regression coverage on real Ghostty/WezTerm/kitty/Warp
+   installations.
+4. Add a safe provider adapter for app/web conversation summaries.
 
 Acceptance: no false inline-success state, no stale pending request after a dead
-transport, and deterministic replay tests for every supported response schema.
+transport, deterministic replay tests for every supported response schema, and
+explicit degradation rather than a guessed status for unsupported providers.
 
 ### P1 - Detached companion and notification quality
 

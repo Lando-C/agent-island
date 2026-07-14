@@ -19,6 +19,7 @@ final class HookSocketServer {
     private let conversations: ConversationStore
     private let health: TransportHealthStore
     private let socketPath: String
+    private let callbackQueue: DispatchQueue
     private let queue = DispatchQueue(label: "local.agent-island.hook-socket", qos: .userInitiated)
     private let maxPayloadSize = 1_048_576
     private var serverSocket: Int32 = -1
@@ -29,12 +30,14 @@ final class HookSocketServer {
         store: PendingRequestStore,
         conversations: ConversationStore = .shared,
         health: TransportHealthStore = .shared,
-        socketPath: String = HookSocketServer.socketPath
+        socketPath: String = HookSocketServer.socketPath,
+        callbackQueue: DispatchQueue = .main
     ) {
         self.store = store
         self.conversations = conversations
         self.health = health
         self.socketPath = socketPath
+        self.callbackQueue = callbackQueue
         self.store.addDecisionHandler { [weak self] request, decision in
             guard request.family == .claude,
                   request.responseSchema?.hasPrefix("claude_") == true else { return }
@@ -210,7 +213,7 @@ final class HookSocketServer {
         conversations.ingestHookRequest(request)
         health.markEvent(id: TransportHealthStore.hookSocketID, name: "Claude Hook Socket")
 
-        DispatchQueue.main.async { [weak self] in
+        callbackQueue.async { [weak self] in
             guard let self else {
                 close(fd)
                 return

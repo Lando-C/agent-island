@@ -18,7 +18,13 @@ private func hookSocketApprovalRoundTrip() -> Bool {
 
     let store = PendingRequestStore()
     let health = TransportHealthStore(outputURL: root.appendingPathComponent("transport.json"))
-    let server = HookSocketServer(store: store, health: health, socketPath: socketPath)
+    let stateQueue = DispatchQueue(label: "local.agent-island.hook-test-state")
+    let server = HookSocketServer(
+        store: store,
+        health: health,
+        socketPath: socketPath,
+        callbackQueue: stateQueue
+    )
     server.start()
     guard waitUntil(timeout: 2, condition: { FileManager.default.fileExists(atPath: socketPath) }) else {
         server.stop()
@@ -40,12 +46,14 @@ private func hookSocketApprovalRoundTrip() -> Bool {
         if count > 0 { response.set(Data(buffer.prefix(count))) }
     }
 
-    guard waitUntil(timeout: 2, condition: { store.requests.first?.id == "claude::socket-request" }),
-          let pending = store.requests.first else {
+    let pending = waitUntil(timeout: 2, condition: {
+        stateQueue.sync { store.requests.first?.id == "claude::socket-request" }
+    }) ? stateQueue.sync { store.requests.first } : nil
+    guard let pending else {
         server.stop()
         return false
     }
-    store.allow(pending)
+    stateQueue.sync { store.allow(pending) }
     let completed = waitUntil(timeout: 2, condition: { !response.value.isEmpty })
     server.stop()
 
@@ -55,7 +63,8 @@ private func hookSocketApprovalRoundTrip() -> Bool {
           let decision = output["decision"] as? [String: String] else {
         return false
     }
-    return decision["behavior"] == "allow" && store.requests.first?.status == .allowed
+    return decision["behavior"] == "allow"
+        && stateQueue.sync { store.requests.first?.status == .allowed }
 }
 
 private func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) -> Bool {

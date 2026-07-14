@@ -32,6 +32,27 @@ private func chatDedupFixture() -> Bool {
     return ChatDetailStore.deduplicated(items).map(\.id) == ["response", "later"]
 }
 
+private func toolTimelineSummaryFixture() -> Bool {
+    let result = ChatDetailItem(
+        id: "result",
+        role: .tool,
+        title: "Tool result",
+        body: "Script completed\\nWall time 1.1 seconds\\nOutput: " + String(repeating: "diagnostic-payload ", count: 900),
+        timestamp: nil
+    )
+    let command = ChatDetailItem(
+        id: "command",
+        role: .tool,
+        title: "exec",
+        body: "console.log('diagnostic data')",
+        timestamp: nil
+    )
+    return !result.isConversation
+        && result.activitySummary.contains("已返回结果")
+        && command.activitySummary == "已执行命令"
+        && result.rawActivityPreview.count < result.body.count
+}
+
 private func incrementalConversationFixture() -> Bool {
     let firstChunk = "{\"type\":\"user\",\"timestamp\":\"2026-07-14T10:00:00Z\",\"message\":{\"content\":\"Hello"
     let first = ConversationTranscriptParser.decodeChunk(
@@ -106,6 +127,11 @@ struct ChatDetailStoreTests {
         #expect(chatDedupFixture())
     }
 
+    @Test("Tool payloads are summarized before rendering the activity timeline")
+    func toolTimelineSummary() {
+        #expect(toolTimelineSummaryFixture())
+    }
+
     @Test("Partial JSONL lines wait for completion before parsing")
     func partialLinesWaitForCompletion() {
         #expect(incrementalConversationFixture())
@@ -129,6 +155,10 @@ final class ChatDetailStoreTests: XCTestCase {
 
     func testNearSimultaneousDuplicateMessagesCollapse() {
         XCTAssertTrue(chatDedupFixture())
+    }
+
+    func testToolPayloadsAreSummarizedBeforeRenderingActivityTimeline() {
+        XCTAssertTrue(toolTimelineSummaryFixture())
     }
 
     func testPartialJSONLLinesWaitForCompletion() {

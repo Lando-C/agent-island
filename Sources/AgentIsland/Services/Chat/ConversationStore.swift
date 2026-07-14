@@ -17,6 +17,7 @@ struct ConversationKey: Hashable {
 struct ConversationRecord: Equatable {
     var items: [ChatDetailItem]
     var sourcePath: String?
+    var historyTruncated: Bool
     var loading: Bool
     var errorMessage: String?
     var lastUpdated: Date?
@@ -39,6 +40,7 @@ final class ConversationStore: ObservableObject {
         var fragment: String
         var nextLineNumber: Int
         var items: [ChatDetailItem]
+        var historyTruncated: Bool
         var lastSourceLookup: Date
     }
 
@@ -60,6 +62,7 @@ final class ConversationStore: ObservableObject {
         publish(key: key, record: ConversationRecord(
             items: records[key]?.items ?? [],
             sourcePath: records[key]?.sourcePath,
+            historyTruncated: records[key]?.historyTruncated ?? false,
             loading: true,
             errorMessage: nil,
             lastUpdated: records[key]?.lastUpdated
@@ -80,6 +83,7 @@ final class ConversationStore: ObservableObject {
                     fragment: "",
                     nextLineNumber: 0,
                     items: self.injectedItems[key] ?? [],
+                    historyTruncated: false,
                     lastSourceLookup: .distantPast
                 )
             }
@@ -118,6 +122,7 @@ final class ConversationStore: ObservableObject {
                     fragment: "",
                     nextLineNumber: 0,
                     items: self.injectedItems[key] ?? [],
+                    historyTruncated: false,
                     lastSourceLookup: .distantPast
                 )
             }
@@ -177,6 +182,7 @@ final class ConversationStore: ObservableObject {
                 self.publish(key: key, record: ConversationRecord(
                     items: self.injectedItems[key] ?? [],
                     sourcePath: nil,
+                    historyTruncated: false,
                     loading: false,
                     errorMessage: nil,
                     lastUpdated: Date()
@@ -219,6 +225,7 @@ final class ConversationStore: ObservableObject {
                 state.fragment = ""
                 state.nextLineNumber = 0
                 state.items = injectedItems[key] ?? []
+                state.historyTruncated = false
             }
         }
 
@@ -249,16 +256,31 @@ final class ConversationStore: ObservableObject {
                 state.fragment = ""
                 state.nextLineNumber = 0
                 state.items = injectedItems[key] ?? []
+                state.historyTruncated = false
             }
             state.inode = inode
 
+            // Large transcripts often contain megabytes of tool output. A detail
+            // panel needs the current turn immediately; the tailer will keep every
+            // subsequent event without repeatedly parsing the whole history.
+            let initialReadLimit: UInt64 = 1_500_000
+            var discardPartialFirstLine = false
+            if state.offset == 0, size > initialReadLimit {
+                state.offset = size - initialReadLimit
+                state.historyTruncated = true
+                discardPartialFirstLine = true
+            }
             let didReadNewBytes = size > state.offset
             if didReadNewBytes {
                 let handle = try FileHandle(forReadingFrom: sourceURL)
                 try handle.seek(toOffset: state.offset)
-                let data = try handle.readToEnd() ?? Data()
+                var data = try handle.readToEnd() ?? Data()
                 try handle.close()
                 state.offset += UInt64(data.count)
+                if discardPartialFirstLine,
+                   let newline = data.firstIndex(of: 0x0A) {
+                    data.removeSubrange(...newline)
+                }
                 if let chunk = String(data: data, encoding: .utf8) {
                     let decoded = ConversationTranscriptParser.decodeChunk(
                         state.fragment + chunk,
@@ -299,6 +321,7 @@ final class ConversationStore: ObservableObject {
         publish(key: key, record: ConversationRecord(
             items: state.items,
             sourcePath: state.sourceURL?.path,
+            historyTruncated: state.historyTruncated,
             loading: false,
             errorMessage: error,
             lastUpdated: Date()

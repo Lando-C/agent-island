@@ -32,7 +32,16 @@ enum TerminalFocuser {
         if normalizedName == "cmux", target.windowID != nil {
             return isCmuxTargetFrontmost(target)
         }
-        return true
+        // App activation proves only that a terminal is frontmost. When an
+        // event carries a pane/tab/TTY/CWD identity, suppressing an alert would
+        // be unsafe unless this terminal exposes a way to verify that identity.
+        return canConfirmAppOnlyForeground(target)
+    }
+
+    static func canConfirmAppOnlyForeground(_ target: TerminalJumpTarget) -> Bool {
+        [target.tty, target.cwd, target.windowID, target.tabIndex, target.sessionIdentifier, target.title]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .allSatisfy(\.isEmpty)
     }
 
     static func isFrontmost(_ target: TmuxJumpTarget) -> Bool {

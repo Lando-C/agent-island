@@ -20,3 +20,6 @@ application and is intentionally reported as such.
 The matrix is conservative. Missing tmux, WezTerm, or kitty helper facilities
 are optional capability warnings, not application failures. A failed exact
 route never causes Agent Island to claim it selected a pane it could not verify.
+The same rule applies to smart suppression: foregrounding Ghostty, kitty, Warp,
+or Kaku is not treated as foregrounding a specific TTY/CWD/tab unless that
+context can be verified. In that case Agent Island leaves the reminder visible.

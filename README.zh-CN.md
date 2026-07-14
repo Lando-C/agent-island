@@ -53,6 +53,12 @@ bash /tmp/agent-island-install --no-open
 
 以后重复执行一键安装命令即可更新。
 
+稳定版在发布到 Homebrew tap 后可通过以下命令安装：
+
+```bash
+brew install --cask Lando-C/tap/agent-island
+```
+
 ## 手动下载安装
 
 1. 打开 [GitHub Releases](https://github.com/Lando-C/agent-island/releases)。
@@ -64,8 +70,8 @@ bash /tmp/agent-island-install --no-open
    ```
 
 4. 解压并将 `Agent Island.app` 移入 `/Applications`。
-5. 当前开发预览版尚未经过 Apple 公证。首次打开时请按住 Control 点击 App，
-   选择“打开”，再确认“打开”。
+5. 稳定版会经过 Apple 公证；开发预览版仍可能需要按住 Control 点击 App，选择
+   “打开”，再确认“打开”。
 6. 打开 **Settings > Diagnostics**，安装 Hooks，并按需授予权限。
 
 ## 首次使用
@@ -86,10 +92,16 @@ bash /tmp/agent-island-install --no-open
   `requestUserInput` 及命令、文件、权限审批；broker 不可用或请求过期时会安全失败，
   保留 Codex 原生提示，不会假装提交成功。
 - 点击会话行的对话按钮，可按需读取本地 Claude/Codex JSONL，查看用户消息、AI
-  回复、工具调用和工具结果。
+  回复、工具调用和工具结果。多个详情窗口共享增量会话存储，只读取新追加的 JSONL
+  内容，并合并 Hook 与 Codex broker 工具事件。
 - 对应 App 或终端已在前台时，智能抑制只阻止自动大展开；状态更新、手动展开和
   通知计数不受影响。
-- 长按刘海 0.35 秒并向下拖拽可进入离岛浮窗；位置自动记忆，右键可回到刘海。
+- 长按刘海 0.35 秒并向下拖拽可进入独立离岛伴侣；点击会显示当前会话气泡，位置按
+  显示器自动记忆，右键可回到刘海。
+- 僵尸检测会同时核对 PID、命令链、准确 TTY 和 tmux pane；仅有 shell 或空 pane
+  存活不会让已结束任务继续显示为工作中。
+- 诊断页会显示 Hook Socket、Codex App Server、会话追尾、进程/TTY、tmux 等传输的
+  连接状态、协议版本、最后成功时间与失败原因。
 - 终端跳转支持 tmux、iTerm2、Terminal、Ghostty、WezTerm、kitty、cmux 等；
   cmux 支持 tab/terminal ID，WezTerm 会枚举多个 GUI socket。
 
@@ -114,6 +126,14 @@ open "/Applications/Agent Island.app"
 ```bash
 "/Applications/Agent Island.app/Contents/Resources/scripts/agent-island-diagnostics"
 ```
+
+生成可安全反馈的脱敏支持包：
+
+```bash
+"/Applications/Agent Island.app/Contents/Resources/scripts/agent-island-support-bundle"
+```
+
+该支持包不包含 `events.jsonl`、聊天记录、Hook payload、命令、session ID 或项目路径。
 
 正常情况下，可选终端未安装或未运行会显示 `WARN`；真正阻止产品运行的问题才应
 显示为 `FAIL`。

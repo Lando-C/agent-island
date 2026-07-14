@@ -131,7 +131,7 @@ enum AgentPhase: String, Codable {
     }
 }
 
-private enum AgentIslandControlKeys {
+enum AgentIslandControlKeys {
     static let collapseRequested = Notification.Name("AgentIslandCollapseRequested")
     static let toggleRequested = Notification.Name("AgentIslandToggleRequested")
 }
@@ -473,12 +473,6 @@ private enum PendingRequestSummary {
     }
 }
 
-struct ProcessRow {
-    var pid: Int
-    var ppid: Int?
-    var command: String
-}
-
 enum AgentText {
     static func singleLine(_ value: String) -> String {
         value
@@ -542,7 +536,7 @@ enum AgentText {
     }
 }
 
-private enum AgentLauncher {
+enum AgentLauncher {
     static func focus(_ snapshot: AgentSnapshot) {
         islandLog("focus requested \(snapshot.id) pid=\(snapshot.targetPID.map(String.init) ?? "none")")
         if let jumpTarget = snapshot.jumpTarget, focus(jumpTarget) {
@@ -945,40 +939,6 @@ struct CodexGoalSummary {
     var latestModified: Date?
 }
 
-struct CodexBrokerThread: Decodable {
-    var id: String?
-    var sessionId: String?
-    var name: String?
-    var preview: String?
-    var cwd: String?
-    var path: String?
-    var source: String?
-    var statusType: String?
-    var updatedAt: Double?
-    var createdAt: Double?
-    var approvalMode: String?
-    var turnCount: Int?
-    var lastTurnId: String?
-    var lastTurnStatus: String?
-    var lastTurnStartedAt: Double?
-    var lastTurnCompletedAt: Double?
-    var lastTurnDurationMs: Double?
-    var lastUserText: String?
-    var lastAgentText: String?
-    var lastWorkLabel: String?
-    var lastItemType: String?
-    var lastItemStatus: String?
-    var activeItemCount: Int?
-    var failedItemCount: Int?
-    var readError: String?
-}
-
-struct CodexBrokerProbeResult: Decodable {
-    var ok: Bool
-    var socket: String?
-    var threads: [CodexBrokerThread]?
-}
-
 struct CodexBrokerSummary {
     var threadCount = 0
     var activeCount = 0
@@ -1044,14 +1004,14 @@ final class AgentMonitor: ObservableObject {
     private var isRefreshing = false
     private var lastSnapshotPublish = Date.distantPast
     private let home = FileManager.default.homeDirectoryForCurrentUser
-    private var cachedCodexBrokerThreads: [CodexBrokerThread] = []
-    private var lastCodexBrokerScan = Date.distantPast
-    private var lastCodexBrokerSuccess = Date.distantPast
+    private let codexBrokerClient: CodexBrokerClient
     private var cachedChatGPTSummary = ChatGPTSummary()
     private var lastChatGPTScan = Date.distantPast
     private var cachedProcessRows: [ProcessRow] = []
     private var lastProcessScan = Date.distantPast
     private var lastProcessScanSuccess = Date.distantPast
+    private var cachedTerminalLiveness = TerminalLivenessSnapshot.unknown
+    private var lastTerminalLivenessScan = Date.distantPast
     private var cachedClaudeTaskSummary = ClaudeTaskSummary()
     private var lastClaudeTaskScan = Date.distantPast
     private var cachedCodexGoalSummary = CodexGoalSummary()
@@ -1075,6 +1035,10 @@ final class AgentMonitor: ObservableObject {
     private var chatGPTWebWasWorking = false
     private var chatGPTAppDoneUntil: Date?
     private var chatGPTWebDoneUntil: Date?
+
+    init(codexBrokerClient: CodexBrokerClient) {
+        self.codexBrokerClient = codexBrokerClient
+    }
 
     var activeCount: Int {
         snapshots.filter { $0.phase == .working }.count
@@ -1140,7 +1104,9 @@ final class AgentMonitor: ObservableObject {
 
     private func collectSnapshots() -> [AgentSnapshot] {
         let rows = readProcessesCached()
-        let events = eventRollups(rows: rows)
+        _ = readRecentAgentEvents()
+        let terminalLiveness = readTerminalLivenessCached(rows: rows)
+        let events = eventRollups(rows: rows, terminalLiveness: terminalLiveness)
         let claudeTasks = readClaudeTaskSummaryCached()
         let codexGoals = readCodexGoalSummaryCached()
         let codexBrokerThreads = readCodexBrokerThreads()
@@ -1194,28 +1160,7 @@ final class AgentMonitor: ObservableObject {
     }
 
     private func readProcesses() -> [ProcessRow] {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["axww", "-o", "pid=,ppid=,command="]
-
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-
-        do {
-            try process.run()
-        } catch {
-            return []
-        }
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        return text.split(separator: "\n").compactMap { line in
-            let parts = line.trimmingCharacters(in: .whitespaces).split(separator: " ", maxSplits: 2)
-            guard parts.count == 3, let pid = Int(parts[0]), let ppid = Int(parts[1]) else { return nil }
-            return ProcessRow(pid: pid, ppid: ppid, command: String(parts[2]))
-        }
+        TargetInspector.readProcesses()
     }
 
     private func readProcessesCached() -> [ProcessRow] {
@@ -1232,6 +1177,22 @@ final class AgentMonitor: ObservableObject {
             cachedProcessRows = []
         }
         return cachedProcessRows
+    }
+
+    private func readTerminalLivenessCached(rows: [ProcessRow]) -> TerminalLivenessSnapshot {
+        let now = Date()
+        guard now.timeIntervalSince(lastTerminalLivenessScan) >= 4 else {
+            return cachedTerminalLiveness
+        }
+        lastTerminalLivenessScan = now
+        let sockets = Set(cachedRecentEvents.compactMap { event in
+            event.terminalTmuxSocket?.isEmpty == false ? event.terminalTmuxSocket : nil
+        })
+        cachedTerminalLiveness = TargetInspector.readTerminalLiveness(
+            processRows: rows,
+            tmuxSockets: sockets
+        )
+        return cachedTerminalLiveness
     }
 
     private func makeCodexApp(rows: [ProcessRow], goals: CodexGoalSummary, broker: CodexBrokerSummary) -> AgentSnapshot {
@@ -1922,32 +1883,7 @@ final class AgentMonitor: ObservableObject {
     }
 
     private func readCodexBrokerThreads() -> [CodexBrokerThread] {
-        let now = Date()
-        if now.timeIntervalSince(lastCodexBrokerScan) < 8 {
-            return cachedCodexBrokerThreads
-        }
-        lastCodexBrokerScan = now
-
-        guard let script = helperScriptPath("codex-broker-probe") else {
-            return now.timeIntervalSince(lastCodexBrokerSuccess) < 30 ? cachedCodexBrokerThreads : []
-        }
-
-        let output = runCommand(
-            executable: "/usr/bin/python3",
-            arguments: [script, "--limit", "80", "--read-visible-details", "--read-limit", "8"]
-        )
-        guard let data = output.data(using: .utf8),
-              let result = try? JSONDecoder().decode(CodexBrokerProbeResult.self, from: data),
-              result.ok else {
-            if now.timeIntervalSince(lastCodexBrokerSuccess) >= 30 {
-                cachedCodexBrokerThreads = []
-            }
-            return cachedCodexBrokerThreads
-        }
-
-        cachedCodexBrokerThreads = result.threads ?? []
-        lastCodexBrokerSuccess = now
-        return cachedCodexBrokerThreads
+        codexBrokerClient.latestThreadsSnapshot()
     }
 
     private func readCodexBrokerConversationInfo(threads: [CodexBrokerThread]) -> [String: ConversationInfo] {
@@ -2380,7 +2316,10 @@ final class AgentMonitor: ObservableObject {
         }
     }
 
-    private func eventRollups(rows: [ProcessRow]) -> [String: AgentEventRollup] {
+    private func eventRollups(
+        rows: [ProcessRow],
+        terminalLiveness: TerminalLivenessSnapshot
+    ) -> [String: AgentEventRollup] {
         let now = Date().timeIntervalSince1970
         _ = readRecentAgentEvents()
         if cachedResolvedEventGeneration != eventLogGeneration {
@@ -2440,7 +2379,12 @@ final class AgentMonitor: ObservableObject {
 
         let rollups = AgentSessionStore.rollups(from: cachedResolvedEvents, now: now)
         return rollups.filter { _, rollup in
-            SessionLiveness.shouldRetain(rollup, processRows: rows, now: now)
+            SessionLiveness.shouldRetain(
+                rollup,
+                processRows: rows,
+                terminalLiveness: terminalLiveness,
+                now: now
+            )
         }
     }
 
@@ -3274,7 +3218,7 @@ struct IslandView: View {
     }
 
     private var displaySnapshots: [AgentSnapshot] {
-        expanded ? monitor.snapshots : Array(activeSnapshots.prefix(3))
+        expanded ? activeSnapshots : Array(activeSnapshots.prefix(3))
     }
 
     private var pendingOnlyRequests: [PendingRequest] {
@@ -4339,7 +4283,7 @@ struct ActivityBars: View {
     }
 }
 
-private enum IslandPanelSizing {
+enum IslandPanelSizing {
     static let screenInset: CGFloat = 16
     static let topGap: CGFloat = 4
     private static let collapsedHeight: CGFloat = 58
@@ -4367,7 +4311,7 @@ private enum IslandPanelSizing {
 // Adapted from DevIsland's notch placement model (MIT, Copyright (c) 2026 nangchang).
 // It prefers the physical notch center when macOS exposes auxiliary top areas, then
 // falls back to the display center on non-notched displays.
-private enum NotchPlacement {
+enum NotchPlacement {
     static let horizontalOffset: CGFloat = -10
 
     static func collectionBehavior(showInFullScreenApps: Bool = true) -> NSWindow.CollectionBehavior {
@@ -4466,20 +4410,24 @@ extension NSScreen {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let monitor = AgentMonitor()
     private let pendingRequests = PendingRequestStore()
     private lazy var hookSocketServer = HookSocketServer(store: pendingRequests)
     private lazy var codexBrokerClient = CodexBrokerClient(store: pendingRequests)
-    private var panel: NSPanel?
+    private lazy var monitor = AgentMonitor(codexBrokerClient: codexBrokerClient)
+    private lazy var islandViewModel = IslandViewModel(
+        monitor: monitor,
+        pendingRequests: pendingRequests
+    )
+    private lazy var panelCoordinator = PanelCoordinator(
+        viewModel: islandViewModel,
+        onSnapshotDetails: { [weak self] snapshot in self?.showChatDetails(snapshot) }
+    )
     private var statusItem: NSStatusItem?
     private var settingsWindowController: AgentSettingsWindowController?
     private var chatDetailWindowControllers: [ChatDetailWindowController] = []
     private var localKeyMonitor: Any?
     private var globalKeyMonitor: Any?
     private var didStart = false
-    private var isExpanded = false
-    private var panelPositionGeneration = 0
-    private var displayMode = IslandDisplayModeStore.mode
 
     private var dataRoot: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agent-island")
@@ -4519,7 +4467,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         didStart = true
 
         NSApp.setActivationPolicy(.accessory)
-        setupPanel()
+        panelCoordinator.start()
         setupStatusItem()
         setupKeyMonitors()
         hookSocketServer.start()
@@ -4539,12 +4487,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(panelDidMove),
-            name: NSWindow.didMoveNotification,
-            object: panel
-        )
-        NotificationCenter.default.addObserver(
-            self,
             selector: #selector(settingsChanged),
             name: AgentIslandSettingsKeys.settingsChanged,
             object: nil
@@ -4561,59 +4503,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hookSocketServer.stop()
         codexBrokerClient.stop()
-    }
-
-    private func setupPanel() {
-        let initialSize = IslandPanelSizing.size(expanded: false, on: NSScreen.main)
-        let panel = IslandPanel(
-            contentRect: NSRect(origin: .zero, size: initialSize),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-
-        panel.isFloatingPanel = true
-        panel.level = .statusBar
-        panel.collectionBehavior = NotchPlacement.collectionBehavior(showInFullScreenApps: true)
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
-        panel.isReleasedWhenClosed = false
-        panel.ignoresMouseEvents = false
-        panel.acceptsMouseMovedEvents = true
-        panel.animationBehavior = .none
-        panel.isMovable = displayMode == .floating
-        panel.isMovableByWindowBackground = displayMode == .floating
-        panel.returnToNotch = { [weak self] in self?.returnToNotch() }
-
-        let hostingView = NSHostingView(rootView: IslandView(
-            monitor: monitor,
-            pendingRequests: pendingRequests,
-            onExpandedChange: { [weak self] expanded in
-                self?.setExpanded(expanded)
-            },
-            onSnapshotAction: { snapshot in
-                AgentLauncher.focus(snapshot)
-            },
-            onSnapshotDetails: { [weak self] snapshot in
-                self?.showChatDetails(snapshot)
-            },
-            onDetachRequested: { [weak self] in
-                self?.enterFloatingMode()
-            }
-        ))
-        hostingView.wantsLayer = true
-        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
-        panel.contentView = hostingView
-
-        self.panel = panel
-        positionPanel(animate: false)
-        panel.orderFrontRegardless()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.panel?.orderFrontRegardless()
-            self?.positionPanel(animate: false)
-        }
-        islandLog("panel setup frame=\(panel.frame)")
+        panelCoordinator.stop()
     }
 
     private func setupStatusItem() {
@@ -4636,6 +4526,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Clear Status Events", action: #selector(clearStatusEvents), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Reinstall Hooks", action: #selector(reinstallHooks), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Copy Diagnostics Report", action: #selector(copyDiagnosticsReport), keyEquivalent: "d"))
+        menu.addItem(NSMenuItem(title: "Create Redacted Support Bundle", action: #selector(createRedactedSupportBundle), keyEquivalent: ""))
         menu.addItem(.separator())
         let allowItem = NSMenuItem(title: "Allow First Pending Request", action: #selector(allowFirstPendingRequest), keyEquivalent: "y")
         allowItem.keyEquivalentModifierMask = [.command]
@@ -4662,7 +4553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.toggleIsland()
                 return nil
             }
-            if event.keyCode == 53, self?.isExpanded == true {
+            if event.keyCode == 53, self?.panelCoordinator.isExpanded == true {
                 NotificationCenter.default.post(name: AgentIslandControlKeys.collapseRequested, object: nil)
                 return nil
             }
@@ -4673,7 +4564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.toggleIsland()
                 return
             }
-            guard event.keyCode == 53, self?.isExpanded == true else { return }
+            guard event.keyCode == 53, self?.panelCoordinator.isExpanded == true else { return }
             NotificationCenter.default.post(name: AgentIslandControlKeys.collapseRequested, object: nil)
         }
     }
@@ -4687,7 +4578,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleApprovalShortcut(_ event: NSEvent) -> Bool {
-        guard isExpanded else { return false }
+        guard panelCoordinator.isExpanded else { return false }
         if isCommandY(event) {
             return approveFirstPendingRequest()
         }
@@ -4739,94 +4630,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return handled
     }
 
-    private func positionPanel(animate: Bool = false) {
-        guard let panel, let screen = NSScreen.main else { return }
-        let size = IslandPanelSizing.size(expanded: isExpanded, on: screen)
-        let frame: NSRect
-        if displayMode == .floating {
-            let currentOrigin = IslandDisplayModeStore.floatingOrigin ?? NSPoint(
-                x: screen.visibleFrame.maxX - size.width - 24,
-                y: screen.visibleFrame.midY - size.height / 2
-            )
-            frame = clampedFloatingFrame(NSRect(origin: currentOrigin, size: size), screen: screen)
-        } else {
-            frame = NotchPlacement.frame(for: size, on: screen)
-        }
-        if animate {
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.22
-                context.allowsImplicitAnimation = true
-                panel.animator().setFrame(frame, display: true)
-            }
-        } else {
-            panel.setFrame(frame, display: true)
-        }
-        islandLog("position display=\(screen.displayId) notched=\(NotchPlacement.hasNotch(on: screen)) screen=\(screen.frame) visible=\(screen.visibleFrame) target=\(frame)")
-    }
-
-    private func clampedFloatingFrame(_ frame: NSRect, screen: NSScreen) -> NSRect {
-        let visible = screen.visibleFrame.insetBy(dx: 8, dy: 8)
-        let x = min(max(frame.minX, visible.minX), max(visible.minX, visible.maxX - frame.width))
-        let y = min(max(frame.minY, visible.minY), max(visible.minY, visible.maxY - frame.height))
-        return NSRect(x: x, y: y, width: frame.width, height: frame.height)
-    }
-
     @objc private func toggleFloatingMode() {
-        displayMode == .floating ? returnToNotch() : enterFloatingMode()
-    }
-
-    private func enterFloatingMode() {
-        guard displayMode != .floating, let panel else { return }
-        displayMode = .floating
-        IslandDisplayModeStore.mode = .floating
-        IslandDisplayModeStore.floatingOrigin = panel.frame.origin
-        panel.isMovable = true
-        panel.isMovableByWindowBackground = true
-        positionPanel(animate: true)
-        islandLog("display mode floating")
-    }
-
-    private func returnToNotch() {
-        guard displayMode != .notch, let panel else { return }
-        IslandDisplayModeStore.floatingOrigin = panel.frame.origin
-        displayMode = .notch
-        IslandDisplayModeStore.mode = .notch
-        panel.isMovable = false
-        panel.isMovableByWindowBackground = false
-        positionPanel(animate: true)
-        islandLog("display mode notch")
-    }
-
-    @objc private func panelDidMove(_ notification: Notification) {
-        guard displayMode == .floating, let panel else { return }
-        IslandDisplayModeStore.floatingOrigin = panel.frame.origin
-    }
-
-    private func schedulePanelPosition(animate: Bool) {
-        panelPositionGeneration &+= 1
-        let generation = panelPositionGeneration
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.panelPositionGeneration == generation else { return }
-            self.positionPanel(animate: animate)
-        }
-    }
-
-    private func setExpanded(_ expanded: Bool) {
-        guard isExpanded != expanded else { return }
-        isExpanded = expanded
-        schedulePanelPosition(animate: true)
+        panelCoordinator.toggleFloatingMode()
     }
 
     @objc private func screenChanged() {
-        positionPanel(animate: false)
+        panelCoordinator.screenChanged()
     }
 
     @objc private func settingsChanged() {
-        let requestedMode = IslandDisplayModeStore.mode
-        if requestedMode != displayMode {
-            requestedMode == .floating ? enterFloatingMode() : returnToNotch()
-        }
-        positionPanel(animate: true)
+        panelCoordinator.applySettings()
     }
 
     @objc private func showSettings() {
@@ -4834,7 +4647,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindowController = AgentSettingsWindowController(
                 scriptsRoot: scriptsRoot,
                 reinstallHooks: { [weak self] in self?.reinstallHooks() },
-                copyDiagnostics: { [weak self] in self?.copyDiagnosticsReport() }
+                copyDiagnostics: { [weak self] in self?.copyDiagnosticsReport() },
+                createSupportBundle: { [weak self] in self?.createRedactedSupportBundle() }
             )
         }
         settingsWindowController?.showWindow(nil)
@@ -4852,11 +4666,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func showIsland() {
-        panel?.orderFrontRegardless()
+        panelCoordinator.show()
     }
 
     @objc private func hideIsland() {
-        panel?.orderOut(nil)
+        panelCoordinator.hide()
     }
 
     @objc private func toggleIslandFromMenu() {
@@ -4864,11 +4678,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func toggleIsland() {
-        if panel?.isVisible != true {
-            panel?.orderFrontRegardless()
-            positionPanel(animate: false)
-        }
-        NotificationCenter.default.post(name: AgentIslandControlKeys.toggleRequested, object: nil)
+        panelCoordinator.toggleIsland()
     }
 
     @objc private func refreshNow() {
@@ -4955,6 +4765,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             } catch {
                 islandLog("diagnostics failed error=\(error.localizedDescription)")
+            }
+        }
+    }
+
+    @objc private func createRedactedSupportBundle() {
+        let script = scriptsRoot.appendingPathComponent("agent-island-support-bundle")
+        guard FileManager.default.isExecutableFile(atPath: script.path) else {
+            islandLog("support bundle failed missing script=\(script.path)")
+            return
+        }
+
+        DispatchQueue.global(qos: .utility).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [script.path]
+            let output = Pipe()
+            process.standardOutput = output
+            process.standardError = Pipe()
+            do {
+                try process.run()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                let path = String(data: data, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                DispatchQueue.main.async {
+                    if process.terminationStatus == 0, let path, !path.isEmpty {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(path, forType: .string)
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+                        islandLog("redacted support bundle created path=\(path)")
+                    } else {
+                        islandLog("support bundle failed exit=\(process.terminationStatus)")
+                    }
+                }
+            } catch {
+                islandLog("support bundle failed error=\(error.localizedDescription)")
             }
         }
     }

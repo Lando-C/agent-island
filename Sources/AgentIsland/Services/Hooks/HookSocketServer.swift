@@ -16,14 +16,22 @@ final class HookSocketServer {
     }
 
     private let store: PendingRequestStore
+    private let conversations: ConversationStore
+    private let health: TransportHealthStore
     private let queue = DispatchQueue(label: "local.agent-island.hook-socket", qos: .userInitiated)
     private let maxPayloadSize = 1_048_576
     private var serverSocket: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private var pendingConnections: [String: PendingConnection] = [:]
 
-    init(store: PendingRequestStore) {
+    init(
+        store: PendingRequestStore,
+        conversations: ConversationStore = .shared,
+        health: TransportHealthStore = .shared
+    ) {
         self.store = store
+        self.conversations = conversations
+        self.health = health
         self.store.addDecisionHandler { [weak self] request, decision in
             guard request.family == .claude,
                   request.responseSchema?.hasPrefix("claude_") == true else { return }
@@ -36,6 +44,11 @@ final class HookSocketServer {
     }
 
     func start() {
+        health.markAttempt(
+            id: TransportHealthStore.hookSocketID,
+            name: "Claude Hook Socket",
+            endpoint: Self.socketPath
+        )
         queue.async { [weak self] in
             self?.startOnQueue()
         }
@@ -55,6 +68,13 @@ final class HookSocketServer {
             }
             pendingConnections.removeAll()
             unlink(Self.socketPath)
+            health.markFailure(
+                id: TransportHealthStore.hookSocketID,
+                name: "Claude Hook Socket",
+                state: .disabled,
+                endpoint: Self.socketPath,
+                error: "Stopped"
+            )
         }
     }
 
@@ -124,8 +144,20 @@ final class HookSocketServer {
             }
             acceptSource = source
             source.resume()
+            health.markConnected(
+                id: TransportHealthStore.hookSocketID,
+                name: "Claude Hook Socket",
+                protocolVersion: "hook-json/v1",
+                endpoint: Self.socketPath
+            )
             islandLog("hook socket started path=\(Self.socketPath)")
         } catch {
+            health.markFailure(
+                id: TransportHealthStore.hookSocketID,
+                name: "Claude Hook Socket",
+                endpoint: Self.socketPath,
+                error: error.localizedDescription
+            )
             islandLog("hook socket start failed error=\(error.localizedDescription)")
         }
     }
@@ -171,6 +203,9 @@ final class HookSocketServer {
             sendFallbackAndClose(fd)
             return
         }
+
+        conversations.ingestHookRequest(request)
+        health.markEvent(id: TransportHealthStore.hookSocketID, name: "Claude Hook Socket")
 
         DispatchQueue.main.async { [weak self] in
             guard let self else {

@@ -23,7 +23,9 @@ The goal is not to show that an app is online. The goal is to answer:
 - Separate `available` (installed) from `online`, `idle`, and active work, so an
   installed CLI is not presented as a running session.
 - Hook-driven session state for Claude Code and Codex CLI.
-- Codex app thread probing and `codex://threads/{threadId}` jump targets.
+- One persistent Codex app-server JSON-RPC client for approvals, questions, and
+  `thread/list` / `thread/read` state, with `codex://threads/{threadId}` jump
+  targets.
 - Claude Science app/runtime detection.
 - ChatGPT App/Web conservative detection. Background browser tabs are not
   reported as "working" without reliable signals.
@@ -42,8 +44,9 @@ The goal is not to show that an app is online. The goal is to answer:
   idle/working widths.
 - Settings window with Appearance, System, Safety, Diagnostics, and Roadmap
   tabs.
-- Diagnostics report for app, hooks, event stream, permissions, Codex broker,
-  hook socket, terminal helpers, app/web surfaces, and auto approval state.
+- Transport diagnostics for the Hook socket, Codex app server, conversation
+  tailer, process/TTY probe, and tmux pane probe. Each transport reports
+  connection state, protocol, last successful event, and failure reason.
 - Hook installer for:
   - Claude Code: `~/.claude/settings.json`
   - Codex CLI: `~/.codex/hooks.json` and `~/.codex/config.toml`
@@ -54,20 +57,24 @@ The goal is not to show that an app is online. The goal is to answer:
   and permission responses when a live `cxc-*/broker.sock` is available. If the
   broker is absent or the request has expired, Agent Island fails closed and
   leaves the native Codex prompt in control.
-- On-demand local chat detail windows for Claude and Codex JSONL transcripts,
-  including user/assistant messages and tool calls/results.
+- Incremental shared conversation store for Claude and Codex transcripts, Hook
+  requests, and Codex broker tool events. Detail windows tail only appended JSONL
+  data and show user/assistant messages plus tool calls/results.
 - Smart spotlight suppression when the corresponding App or terminal is
   already frontmost; status still updates and manual expansion still works.
-- Off-island floating mode with 0.35-second long-press/downward-drag detach,
-  persisted position, status-menu toggle, and right-click return to the notch.
-- Stale session convergence: completed work expires after 10 minutes, idle
-  capability rows after 1 hour, and inactive waiting/error events after 12
-  hours. Process-aware zombie detection remains on the roadmap.
+- Off-island floating companion with independent compact layout, status motion,
+  click-to-expand current-session bubble, 0.35-second long-press/downward-drag
+  detach, per-display position restore, status-menu toggle, and right-click
+  return to the notch.
+- PID, command chain, exact TTY, and exact tmux pane liveness are combined for
+  zombie detection. A surviving shell or tmux pane without a matching agent
+  process no longer keeps a stale task alive.
 - Incremental Hook-log ingestion and throttled fallback probes keep status
   transitions responsive without continuously reparsing the full event and
   conversation history.
 - Low-frequency activity motion preserves visible working feedback without
-  permanent 60 fps redraws, and respects macOS Reduce Motion.
+  permanent 60 fps redraws, respects macOS Reduce Motion, and has optional
+  local system-sound alerts for start, completion, and human attention.
 - In-island allow/deny for Claude Code `PermissionRequest` hooks.
 - `request_user_input` / elicitation events are captured as structured pending
   requests. Verified Claude hook and Codex app-server schemas are written back
@@ -111,6 +118,12 @@ bash /tmp/agent-island-install --no-open
 Re-run the same command to update. The previous app is restored automatically
 if installation fails.
 
+For a notarized stable release distributed through a Homebrew tap:
+
+```bash
+brew install --cask Lando-C/tap/agent-island
+```
+
 ## Manual Release Install
 
 1. Open [GitHub Releases](https://github.com/Lando-C/agent-island/releases).
@@ -122,8 +135,8 @@ if installation fails.
    ```
 
 4. Unzip the archive and move `Agent Island.app` to `/Applications`.
-5. This developer preview is not Apple-notarized yet. On first launch,
-   Control-click the app, choose **Open**, then confirm **Open**.
+5. Stable releases are notarized. A developer preview may still require the
+   normal macOS first-open confirmation.
 6. In Agent Island, open **Settings > Diagnostics**, then install hooks and
    grant only the permissions needed by the surfaces you use.
 
@@ -145,7 +158,8 @@ set `AGENT_ISLAND_SIGNING_IDENTITY` to a Developer ID Application identity.
 For local daily use, install the built app into `/Applications`:
 
 ```bash
-rm -rf "/Applications/Agent Island.app"
+pkill -x AgentIsland || true
+mv "/Applications/Agent Island.app" "/tmp/Agent-Island.previous.app" 2>/dev/null || true
 ditto "dist/Agent Island.app" "/Applications/Agent Island.app"
 open "/Applications/Agent Island.app"
 ```
@@ -265,6 +279,7 @@ From the app menu or Settings window, copy/run the diagnostics report. It checks
 - Event stream freshness.
 - Accessibility and Apple Events.
 - Codex broker/socket visibility.
+- Per-transport health, protocol version, last success, and failure reason.
 - tmux availability and server state.
 - terminal helper tools such as `wezterm`, `kitty`, `kitten`, and `osascript`.
 - running app surfaces such as Codex, Claude, ChatGPT, Chrome, and Safari.
@@ -274,6 +289,12 @@ Command-line diagnostics:
 
 ```bash
 "/Applications/Agent Island.app/Contents/Resources/scripts/agent-island-diagnostics"
+```
+
+Create a safe support bundle without event logs or transcripts:
+
+```bash
+"/Applications/Agent Island.app/Contents/Resources/scripts/agent-island-support-bundle"
 ```
 
 ## Uninstall
@@ -307,13 +328,13 @@ Next priority is not a UI rewrite. The next product work should be:
 1. Connect Codex CLI interactive requests that do not expose a desktop broker,
    while preserving the fail-closed native prompt fallback.
 2. More exact existing-window focusing for Warp, kitty, and Kaku.
-3. Incremental hook-driven chat history so details do not need on-demand JSONL
-   parsing.
-4. Process-aware zombie detection and transcript fallback beyond the existing
-   time-based stale-session pruning.
-5. Release signing/notarization and Homebrew cask.
-6. Replace the floating capsule MVP with configurable animated mascots and add
-   opt-in event sounds.
+3. Add app/web conversation transports where the local client exposes a safe
+   event API; avoid screen-scraping as a source of truth.
+4. Expand exact existing-window focusing for Warp, kitty, and Kaku.
+5. Publish the rendered Cask into the Homebrew tap after the first notarized
+   release is signed.
+6. Extend the compact companion into per-engine configurable mascots without
+   weakening the status-first information design.
 
 ## Reference Projects
 

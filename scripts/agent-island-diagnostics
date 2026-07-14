@@ -4,6 +4,11 @@
 
 set -uo pipefail
 
+REDACTED=0
+if [[ "${1:-}" == "--redacted" ]]; then
+  REDACTED=1
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="$HOME/.agent-island"
 EVENTS="$DATA_DIR/events.jsonl"
@@ -13,6 +18,7 @@ PROBE="$SCRIPT_DIR/codex-broker-probe"
 INSTALL_HOOKS="$SCRIPT_DIR/install-hooks"
 AUTO_APPROVAL="$DATA_DIR/auto-approval.json"
 HOOK_SOCKET="$DATA_DIR/hook.sock"
+TRANSPORT_HEALTH="$DATA_DIR/transport-health.json"
 
 pass_count=0
 warn_count=0
@@ -22,6 +28,9 @@ status() {
   local level="$1"
   local name="$2"
   local detail="${3:-}"
+  if [[ "$REDACTED" == "1" && -n "$detail" ]]; then
+    detail="$(redact "$detail")"
+  fi
   case "$level" in
     PASS) pass_count=$((pass_count + 1)) ;;
     WARN) warn_count=$((warn_count + 1)) ;;
@@ -32,6 +41,12 @@ status() {
   else
     printf '[%s] %s\n' "$level" "$name"
   fi
+}
+
+redact() {
+  local value="$1"
+  value="${value//$HOME/~}"
+  printf '%s' "$value" | sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}/<session>/g'
 }
 
 section() {
@@ -78,7 +93,12 @@ mtime_epoch() {
 
 printf '# Agent Island Diagnostics\n'
 printf 'Generated: %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')"
-printf 'Script: %s\n' "$0"
+if [[ "$REDACTED" == "1" ]]; then
+  printf 'Script: agent-island-diagnostics\n'
+  printf 'Redaction: enabled\n'
+else
+  printf 'Script: %s\n' "$0"
+fi
 
 section "App"
 if pgrep -f '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' >/dev/null 2>&1; then
@@ -92,7 +112,11 @@ else
   status WARN "Installed app binary" "missing /Applications/Agent Island.app"
 fi
 if [[ -x "$BRIDGE" ]]; then
-  status PASS "Hook bridge executable" "$BRIDGE"
+  if [[ "$REDACTED" == "1" ]]; then
+    status PASS "Hook bridge executable" "present"
+  else
+    status PASS "Hook bridge executable" "$BRIDGE"
+  fi
 else
   status FAIL "Hook bridge executable" "$BRIDGE is missing or not executable"
 fi
@@ -139,13 +163,68 @@ else
   status WARN "Hook socket" "$HOOK_SOCKET missing; Agent Island is not running"
 fi
 
+section "Transport Health"
+if [[ -f "$TRANSPORT_HEALTH" ]]; then
+  python3 - "$TRANSPORT_HEALTH" "$REDACTED" <<'PY'
+import json, os, re, sys
+path, redacted = sys.argv[1], sys.argv[2] == "1"
+try:
+    values = json.load(open(path, encoding="utf-8"))
+except Exception as exc:
+    print(f"[WARN] Transport health file — invalid: {exc}")
+    raise SystemExit(0)
+if not isinstance(values, list):
+    print("[WARN] Transport health file — expected a list")
+    raise SystemExit(0)
+home = os.path.expanduser("~")
+for value in values:
+    if not isinstance(value, dict):
+        continue
+    name = value.get("name") or value.get("id") or "transport"
+    state = value.get("state") or "unknown"
+    protocol = value.get("protocolVersion") or "unknown protocol"
+    last = value.get("lastSuccessAt") or "never"
+    failure = value.get("failure")
+    endpoint = value.get("endpoint")
+    if redacted:
+        endpoint = endpoint.replace(home, "~") if isinstance(endpoint, str) else endpoint
+        failure = re.sub(r"[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}", "<session>", failure or "")
+    detail = f"state={state} protocol={protocol} last_success={last}"
+    if endpoint:
+        detail += f" endpoint={endpoint}"
+    if failure:
+        detail += f" failure={failure}"
+    print(f"[INFO] {name} — {detail}")
+PY
+else
+  status WARN "Transport health file" "$TRANSPORT_HEALTH not written yet; start Agent Island once"
+fi
+
 section "Event Stream"
 if [[ -f "$EVENTS" ]]; then
   count="$(line_count "$EVENTS")"
   age=$(( $(date +%s) - $(mtime_epoch "$EVENTS") ))
   status PASS "Events log" "$EVENTS lines=$count age=${age}s"
-  last="$(tail -n 1 "$EVENTS" 2>/dev/null | cut -c 1-240)"
-  [[ -n "$last" ]] && printf 'Last event: %s\n' "$last"
+  if [[ "$REDACTED" == "1" ]]; then
+    last="$(tail -n 1 "$EVENTS" 2>/dev/null)"
+  else
+    last="$(tail -n 1 "$EVENTS" 2>/dev/null | cut -c 1-240)"
+  fi
+  if [[ -n "$last" ]]; then
+    if [[ "$REDACTED" == "1" ]]; then
+      python3 - "$last" <<'PY'
+import json, sys
+try:
+    value = json.loads(sys.argv[1])
+    fields = {key: value.get(key) for key in ("agent", "family", "surface", "status", "phase", "event", "ts") if value.get(key) is not None}
+    print("Last event metadata: " + json.dumps(fields, ensure_ascii=False, separators=(",", ":")))
+except Exception:
+    print("Last event metadata: unavailable")
+PY
+    else
+      printf 'Last event: %s\n' "$last"
+    fi
+  fi
 else
   status WARN "Events log" "$EVENTS not found yet"
 fi

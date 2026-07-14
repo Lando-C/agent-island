@@ -42,7 +42,7 @@ struct ChatDetailView: View {
                 Spacer()
                 if store.loading { ProgressView().controlSize(.small) }
                 Button {
-                    store.load(snapshot: snapshot)
+                    store.refresh()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }

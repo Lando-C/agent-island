@@ -32,6 +32,24 @@ private func chatDedupFixture() -> Bool {
     return ChatDetailStore.deduplicated(items).map(\.id) == ["response", "later"]
 }
 
+private func incrementalConversationFixture() -> Bool {
+    let firstChunk = "{\"type\":\"user\",\"timestamp\":\"2026-07-14T10:00:00Z\",\"message\":{\"content\":\"Hello"
+    let first = ConversationTranscriptParser.decodeChunk(
+        firstChunk,
+        family: .claude,
+        startingLineNumber: 0
+    )
+    guard first.items.isEmpty, !first.fragment.isEmpty else { return false }
+    let second = ConversationTranscriptParser.decodeChunk(
+        first.fragment + " world\"}}\n",
+        family: .claude,
+        startingLineNumber: first.completeLineCount
+    )
+    return second.fragment.isEmpty
+        && second.completeLineCount == 1
+        && second.items.map(\.body) == ["Hello world"]
+}
+
 #if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Chat detail store")
 struct ChatDetailStoreTests {
@@ -44,6 +62,11 @@ struct ChatDetailStoreTests {
     func duplicateMessagesCollapse() {
         #expect(chatDedupFixture())
     }
+
+    @Test("Partial JSONL lines wait for completion before parsing")
+    func partialLinesWaitForCompletion() {
+        #expect(incrementalConversationFixture())
+    }
 }
 #elseif canImport(XCTest)
 final class ChatDetailStoreTests: XCTestCase {
@@ -53,6 +76,10 @@ final class ChatDetailStoreTests: XCTestCase {
 
     func testNearSimultaneousDuplicateMessagesCollapse() {
         XCTAssertTrue(chatDedupFixture())
+    }
+
+    func testPartialJSONLLinesWaitForCompletion() {
+        XCTAssertTrue(incrementalConversationFixture())
     }
 }
 #endif

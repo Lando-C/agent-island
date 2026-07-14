@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Ling
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA_DIR="$HOME/.agent-island"
+OUTPUT_DIR="$HOME/Desktop"
+
+usage() {
+  printf 'Usage: %s [--output DIRECTORY]\n' "$0"
+}
+
+while [[ "$#" -gt 0 ]]; do
+  case "$1" in
+    --output)
+      OUTPUT_DIR="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      exit 64
+      ;;
+  esac
+done
+
+[[ -n "$OUTPUT_DIR" ]] || { printf 'Output directory is empty\n' >&2; exit 64; }
+mkdir -p "$OUTPUT_DIR"
+
+TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agent-island-support.XXXXXX")"
+cleanup() { rm -rf "$TMP_DIR"; }
+trap cleanup EXIT
+
+STAMP="$(date '+%Y%m%d-%H%M%S')"
+ROOT="$TMP_DIR/agent-island-support-$STAMP"
+mkdir -p "$ROOT"
+
+"$SCRIPT_DIR/agent-island-diagnostics" --redacted > "$ROOT/diagnostics.txt" 2>&1 || true
+sw_vers > "$ROOT/macos.txt" 2>&1 || true
+uname -a >> "$ROOT/macos.txt" 2>&1 || true
+
+APP="/Applications/Agent Island.app"
+if [[ -d "$APP" ]]; then
+  codesign -dv --verbose=2 "$APP" > "$ROOT/code-signature.txt" 2>&1 || true
+  spctl --assess --type execute --verbose=2 "$APP" > "$ROOT/gatekeeper.txt" 2>&1 || true
+fi
+
+if [[ -f "$DATA_DIR/transport-health.json" ]]; then
+  python3 - "$DATA_DIR/transport-health.json" "$ROOT/transport-health.json" <<'PY'
+import json, os, re, sys
+source, target = sys.argv[1], sys.argv[2]
+home = os.path.expanduser("~")
+try:
+    values = json.load(open(source, encoding="utf-8"))
+except Exception as exc:
+    values = [{"state": "invalid", "failure": str(exc)}]
+
+def clean(value):
+    if not isinstance(value, str):
+        return value
+    value = value.replace(home, "~")
+    return re.sub(r"[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}", "<session>", value)
+
+allowed = ("id", "name", "state", "protocolVersion", "lastAttemptAt", "lastSuccessAt", "lastEventAt", "failure")
+safe = []
+for value in values if isinstance(values, list) else []:
+    if isinstance(value, dict):
+        safe.append({key: clean(value.get(key)) for key in allowed if key in value})
+json.dump(safe, open(target, "w", encoding="utf-8"), ensure_ascii=False, indent=2, sort_keys=True)
+PY
+fi
+
+python3 - "$ROOT/manifest.json" <<'PY'
+import json, platform, sys
+json.dump({
+    "format": "agent-island-support/v1",
+    "redacted": True,
+    "includes": ["diagnostics", "macos", "code-signature", "gatekeeper", "transport-health"],
+    "excludes": ["events.jsonl", "conversation transcripts", "hook payloads", "commands", "project paths"],
+    "platform": platform.platform(),
+}, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=2, sort_keys=True)
+PY
+
+ARCHIVE="$OUTPUT_DIR/agent-island-support-$STAMP.tar.gz"
+tar -C "$TMP_DIR" -czf "$ARCHIVE" "$(basename "$ROOT")"
+shasum -a 256 "$ARCHIVE" > "$ARCHIVE.sha256"
+
+printf '%s\n' "$ARCHIVE"

@@ -7,7 +7,7 @@ import Testing
 
 private let livenessSessionID = "70266e98-3300-4871-8ec4-8edba1ee8a24"
 
-private func livenessEvent(pid: Int?, ts: Double) -> AgentEvent {
+func livenessEvent(pid: Int?, ts: Double) -> AgentEvent {
     AgentEvent(
         agent: "claude",
         family: nil,
@@ -44,7 +44,7 @@ private func livenessEvent(pid: Int?, ts: Double) -> AgentEvent {
     )
 }
 
-private func livenessRollup(
+func livenessRollup(
     pid: Int?,
     phase: AgentPhase = .working,
     ts: Double

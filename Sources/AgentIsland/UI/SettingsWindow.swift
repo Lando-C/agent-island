@@ -16,12 +16,15 @@ final class AgentSettingsWindowController: NSWindowController {
     init(
         scriptsRoot: URL,
         reinstallHooks: @escaping () -> Void,
-        copyDiagnostics: @escaping () -> Void
+        copyDiagnostics: @escaping () -> Void,
+        createSupportBundle: @escaping () -> Void
     ) {
         let view = AgentSettingsView(
             scriptsRoot: scriptsRoot,
             reinstallHooks: reinstallHooks,
-            copyDiagnostics: copyDiagnostics
+            copyDiagnostics: copyDiagnostics,
+            createSupportBundle: createSupportBundle,
+            transportHealth: .shared
         )
         let hostingView = NSHostingView(rootView: view)
         let window = NSWindow(
@@ -66,6 +69,8 @@ struct AgentSettingsView: View {
     let scriptsRoot: URL
     let reinstallHooks: () -> Void
     let copyDiagnostics: () -> Void
+    let createSupportBundle: () -> Void
+    @ObservedObject var transportHealth: TransportHealthStore
 
     @State private var selectedTab: SettingsTab = .diagnostics
     @State private var diagnosticsText = "点击 Run Diagnostics 生成报告。"
@@ -77,6 +82,7 @@ struct AgentSettingsView: View {
     @State private var launchStatus = LaunchAtLoginController.statusText
     @State private var smartSuppression = SmartSuppression.isEnabled
     @State private var floatingMode = IslandDisplayModeStore.mode == .floating
+    @State private var soundEnabled = AgentIslandSoundSettings.enabled
     @State private var settingsMessage = ""
 
     var body: some View {
@@ -275,6 +281,11 @@ struct AgentSettingsView: View {
                     .onChange(of: smartSuppression) { value in
                         SmartSuppression.isEnabled = value
                     }
+                Toggle("声音提醒", isOn: $soundEnabled)
+                    .help("默认关闭。开始、完成和需要处理分别使用系统内置声音；不会上传任何会话内容。")
+                    .onChange(of: soundEnabled) { value in
+                        AgentIslandSoundSettings.enabled = value
+                    }
             }
         }
     }
@@ -318,9 +329,24 @@ struct AgentSettingsView: View {
                 Button("Copy via Menu Action") {
                     copyDiagnostics()
                 }
+                Button("Create Redacted Support Bundle") {
+                    createSupportBundle()
+                }
                 Spacer()
                 Button("Open Status Folder") {
                     NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agent-island"))
+                }
+            }
+
+            settingSection("传输状态") {
+                if transportHealth.snapshots.isEmpty {
+                    Text("等待 Agent Island 初始化传输。")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(transportHealth.snapshots) { transport in
+                        transportRow(transport)
+                    }
                 }
             }
 
@@ -335,6 +361,61 @@ struct AgentSettingsView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color(nsColor: .textBackgroundColor))
             )
+        }
+    }
+
+    private func transportRow(_ transport: TransportHealthSnapshot) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: transportIcon(transport.state))
+                .foregroundColor(transportColor(transport.state))
+                .frame(width: 16)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(transport.name)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(transport.state.label)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(transportColor(transport.state))
+                }
+                if let protocolVersion = transport.protocolVersion, !protocolVersion.isEmpty {
+                    Text(protocolVersion)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+                if let lastSuccess = transport.lastSuccessAt {
+                    Text("Last success \(lastSuccess, style: .relative)")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                }
+                if let failure = transport.failure, !failure.isEmpty {
+                    Text(failure)
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func transportIcon(_ state: TransportConnectionState) -> String {
+        switch state {
+        case .connected: return "checkmark.circle.fill"
+        case .connecting: return "arrow.triangle.2.circlepath"
+        case .degraded: return "exclamationmark.triangle.fill"
+        case .failed: return "xmark.octagon.fill"
+        case .disabled, .unavailable: return "minus.circle"
+        }
+    }
+
+    private func transportColor(_ state: TransportConnectionState) -> Color {
+        switch state {
+        case .connected: return .green
+        case .connecting: return .blue
+        case .degraded: return .orange
+        case .failed: return .red
+        case .disabled, .unavailable: return .secondary
         }
     }
 

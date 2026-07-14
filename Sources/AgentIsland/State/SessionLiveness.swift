@@ -15,14 +15,21 @@ enum SessionLiveness {
     static func shouldRetain(
         _ rollup: AgentEventRollup,
         processRows: [ProcessRow],
+        terminalLiveness: TerminalLivenessSnapshot = .unknown,
         now: Double
     ) -> Bool {
-        verdict(for: rollup, processRows: processRows, now: now) != .dead
+        verdict(
+            for: rollup,
+            processRows: processRows,
+            terminalLiveness: terminalLiveness,
+            now: now
+        ) != .dead
     }
 
     static func verdict(
         for rollup: AgentEventRollup,
         processRows: [ProcessRow],
+        terminalLiveness: TerminalLivenessSnapshot = .unknown,
         now: Double
     ) -> SessionLivenessVerdict {
         guard let phase = rollup.displayPhase,
@@ -30,8 +37,7 @@ enum SessionLiveness {
               let family = rollup.family,
               let surface = rollup.surface,
               let session = rollup.session,
-              let event = rollup.displayEvent,
-              let pid = event.pid else {
+              let event = rollup.displayEvent else {
             return .unknown
         }
 
@@ -39,7 +45,8 @@ enum SessionLiveness {
         if age <= processExitGrace {
             return .unknown
         }
-        guard !processRows.isEmpty else {
+        let processProbeSucceeded = terminalLiveness.processProbeSucceeded || !processRows.isEmpty
+        guard processProbeSucceeded else {
             return .unknown
         }
 
@@ -51,12 +58,51 @@ enum SessionLiveness {
             return .live
         }
 
-        guard processMap[pid] != nil else {
-            return .dead
+        var hasOwnerIdentity = false
+        if let pid = event.pid {
+            hasOwnerIdentity = true
+            if processMap[pid] != nil {
+                let commands = commandChain(startingAt: pid, processMap: processMap)
+                if commandsMatch(family: family, surface: surface, commands: commands) {
+                    return .live
+                }
+            }
         }
 
-        let commands = commandChain(startingAt: pid, processMap: processMap)
-        return commandsMatch(family: family, surface: surface, commands: commands) ? .live : .dead
+        var candidateTTYs = Set<String>()
+        if let tty = normalizedTTY(event.terminalTTY) {
+            hasOwnerIdentity = true
+            candidateTTYs.insert(tty)
+        }
+
+        if let paneID = event.terminalTmuxPane, !paneID.isEmpty {
+            hasOwnerIdentity = true
+            if terminalLiveness.tmuxProbeSucceeded {
+                guard let pane = terminalLiveness.pane(id: paneID, socket: event.terminalTmuxSocket),
+                      !pane.isDead else {
+                    return .dead
+                }
+                if let tty = normalizedTTY(pane.tty) { candidateTTYs.insert(tty) }
+            }
+        }
+
+        if !candidateTTYs.isEmpty {
+            let rowsOnTarget = processRows.filter { row in
+                guard let tty = normalizedTTY(row.tty) else { return false }
+                return candidateTTYs.contains(tty)
+            }
+            if rowsOnTarget.contains(where: { row in
+                commandsMatch(
+                    family: family,
+                    surface: surface,
+                    commands: commandChain(startingAt: row.pid, processMap: processMap)
+                )
+            }) {
+                return .live
+            }
+        }
+
+        return hasOwnerIdentity ? .dead : .unknown
     }
 
     private static func phaseRequiresLiveOwner(_ phase: AgentPhase) -> Bool {
@@ -100,6 +146,13 @@ enum SessionLiveness {
             current = parent
         }
         return commands
+    }
+
+    private static func normalizedTTY(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value != "?", value != "??", value != "-" else { return nil }
+        return value.hasPrefix("/dev/") ? value : "/dev/\(value)"
     }
 
     private static func commandsMatch(

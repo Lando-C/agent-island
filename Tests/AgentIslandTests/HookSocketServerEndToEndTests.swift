@@ -32,6 +32,9 @@ private func hookSocketApprovalRoundTrip() -> Bool {
         guard let fd = connectUnixSocket(socketPath) else { return }
         defer { close(fd) }
         _ = request.withUnsafeBytes { send(fd, $0.baseAddress, request.count, 0) }
+        // The production bridge half-closes after its one JSON frame. The
+        // server then keeps the read side open while the approval is pending.
+        _ = shutdown(fd, SHUT_WR)
         var buffer = [UInt8](repeating: 0, count: 4096)
         let count = recv(fd, &buffer, buffer.count, 0)
         if count > 0 { response.set(Data(buffer.prefix(count))) }

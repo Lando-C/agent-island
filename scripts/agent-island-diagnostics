@@ -18,6 +18,8 @@ PROBE="$SCRIPT_DIR/codex-broker-probe"
 INSTALL_HOOKS="$SCRIPT_DIR/install-hooks"
 AUTO_APPROVAL="$DATA_DIR/auto-approval.json"
 HOOK_SOCKET="$DATA_DIR/hook.sock"
+WEB_BRIDGE_TOKEN="$DATA_DIR/web-bridge-token"
+WEB_BRIDGE_PORT=27583
 TRANSPORT_HEALTH="$DATA_DIR/transport-health.json"
 
 pass_count=0
@@ -161,6 +163,25 @@ elif pgrep -f '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' >/dev/
   status FAIL "Hook socket" "$HOOK_SOCKET missing while Agent Island is running"
 else
   status WARN "Hook socket" "$HOOK_SOCKET missing; Agent Island is not running"
+fi
+
+section "Browser Web Bridge"
+if [[ -f "$WEB_BRIDGE_TOKEN" ]]; then
+  mode="$(stat -f %Lp "$WEB_BRIDGE_TOKEN" 2>/dev/null || echo unknown)"
+  if [[ "$mode" == "600" ]]; then
+    status PASS "Web bridge pairing token" "owner-only token present"
+  else
+    status WARN "Web bridge pairing token" "unexpected mode=$mode; restart Agent Island to rotate manually if needed"
+  fi
+else
+  status WARN "Web bridge pairing token" "not created yet; start Agent Island once"
+fi
+if lsof -nP -iTCP:"$WEB_BRIDGE_PORT" -sTCP:LISTEN 2>/dev/null | grep -q '127.0.0.1'; then
+  status PASS "Browser Web Bridge" "listening on 127.0.0.1:$WEB_BRIDGE_PORT"
+elif pgrep -f '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' >/dev/null 2>&1; then
+  status FAIL "Browser Web Bridge" "not listening on 127.0.0.1:$WEB_BRIDGE_PORT while Agent Island is running"
+else
+  status WARN "Browser Web Bridge" "Agent Island is not running"
 fi
 
 section "Transport Health"

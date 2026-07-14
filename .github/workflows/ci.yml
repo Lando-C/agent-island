@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-14
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Swift build
         run: swift build
@@ -25,6 +25,13 @@ jobs:
 
       - name: Python syntax
         run: python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe
+
+      - name: Browser bridge extension syntax
+        run: |
+          python3 -m json.tool extensions/agent-island-web-bridge/manifest.json >/dev/null
+          node --check extensions/agent-island-web-bridge/background.js
+          node --check extensions/agent-island-web-bridge/content.js
+          node --check extensions/agent-island-web-bridge/options.js
 
       - name: Shell syntax
         run: bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install scripts/install-hooks scripts/agent-island-event scripts/test-swift

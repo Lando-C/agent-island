@@ -29,6 +29,12 @@ The goal is not to show that an app is online. The goal is to answer:
 - Claude Science app/runtime detection.
 - ChatGPT App/Web conservative detection. Background browser tabs are not
   reported as "working" without reliable signals.
+- Every displayed state identifies its evidence: real-time Hook, app transcript,
+  app server, browser bridge, process probe, or heuristic. A process being
+  online is never presented as a confirmed active task.
+- Optional local Browser Web Bridge for ChatGPT, Claude, and Codex web pages.
+  It is token-paired, loopback-only, and explicitly labelled as a browser DOM
+  signal rather than a transcript or Hook.
 - Terminal and tmux jump targets through `JumpTarget.terminal` and
   `JumpTarget.tmux`.
 - Exact cmux tab/terminal selection and multi-socket WezTerm pane discovery,
@@ -45,7 +51,8 @@ The goal is not to show that an app is online. The goal is to answer:
 - Settings window with Appearance, System, Safety, Diagnostics, and Roadmap
   tabs.
 - Transport diagnostics for the Hook socket, Codex app server, conversation
-  tailer, process/TTY probe, and tmux pane probe. Each transport reports
+  tailer, process/TTY probe, tmux pane probe, terminal focus matrix, and browser
+  web bridge. Each transport reports
   connection state, protocol, last successful event, and failure reason.
 - Hook installer for:
   - Claude Code: `~/.claude/settings.json`
@@ -280,6 +287,9 @@ From the app menu or Settings window, copy/run the diagnostics report. It checks
 - Accessibility and Apple Events.
 - Codex broker/socket visibility.
 - Per-transport health, protocol version, last success, and failure reason.
+- The last terminal jump route and whether it used an exact pane/session route
+  or an application-level fallback.
+- Current session evidence sources and Browser Web Bridge pairing health.
 - tmux availability and server state.
 - terminal helper tools such as `wezterm`, `kitty`, `kitten`, and `osascript`.
 - running app surfaces such as Codex, Claude, ChatGPT, Chrome, and Safari.
@@ -335,6 +345,25 @@ Next priority is not a UI rewrite. The next product work should be:
    release is signed.
 6. Extend the compact companion into per-engine configurable mascots without
    weakening the status-first information design.
+
+## Browser Web Bridge
+
+The optional browser bridge is packaged as `WebBridgeExtension` inside the app
+bundle and is also available in
+[`extensions/agent-island-web-bridge`](extensions/agent-island-web-bridge).
+It supports Chrome and Chromium browsers. Install it unpacked, copy the pairing
+token from **Settings > Diagnostics**, and paste it in the extension options.
+It sends only minimal status metadata to `127.0.0.1`; it never reads or uploads
+page text, prompts, replies, cookies, or credentials. See
+[`docs/WEB_BRIDGE.md`](docs/WEB_BRIDGE.md) for the exact steps and trust model.
+
+## Terminal Focus Matrix
+
+The supported exact/context/fallback routes for tmux, iTerm2, Terminal,
+Ghostty, WezTerm, kitty, cmux, Warp, Kaku, Wave, and Alacritty are documented
+in [`docs/TERMINAL_JUMP_MATRIX.md`](docs/TERMINAL_JUMP_MATRIX.md). The app
+reports the route it actually used in Diagnostics instead of implying that every
+terminal can be focused at pane precision.
 
 ## Reference Projects
 

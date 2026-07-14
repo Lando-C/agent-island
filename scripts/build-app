@@ -34,6 +34,10 @@ mkdir -p "$MACOS" "$RESOURCES"
 cp "$binary_dir/AgentIsland" "$MACOS/AgentIsland"
 mkdir -p "$RESOURCES/scripts"
 cp -R "$ROOT/scripts/." "$RESOURCES/scripts/"
+if [[ -d "$ROOT/extensions/agent-island-web-bridge" ]]; then
+  mkdir -p "$RESOURCES/WebBridgeExtension"
+  cp -R "$ROOT/extensions/agent-island-web-bridge/." "$RESOURCES/WebBridgeExtension/"
+fi
 find "$RESOURCES/scripts" -type d -name "__pycache__" -prune -exec rm -rf {} +
 find "$RESOURCES/scripts" -type f -exec chmod +x {} +
 

@@ -101,9 +101,12 @@ brew install --cask Lando-C/tap/agent-island
 - 僵尸检测会同时核对 PID、命令链、准确 TTY 和 tmux pane；仅有 shell 或空 pane
   存活不会让已结束任务继续显示为工作中。
 - 诊断页会显示 Hook Socket、Codex App Server、会话追尾、进程/TTY、tmux 等传输的
-  连接状态、协议版本、最后成功时间与失败原因。
+  连接状态、协议版本、最后成功时间与失败原因；也会显示终端跳转实际采用的精确/
+  回退路径。
 - 终端跳转支持 tmux、iTerm2、Terminal、Ghostty、WezTerm、kitty、cmux 等；
   cmux 支持 tab/terminal ID，WezTerm 会枚举多个 GUI socket。
+- 每条状态会标明来源：实时 Hook、App 记录、App Server、网页桥接、进程探测或
+  启发式。进程在线不会被伪装为已确认的工作中。
 
 ## 从源码安装
 
@@ -137,6 +140,24 @@ open "/Applications/Agent Island.app"
 
 正常情况下，可选终端未安装或未运行会显示 `WARN`；真正阻止产品运行的问题才应
 显示为 `FAIL`。
+
+## 网页端 Bridge
+
+Chrome/Chromium 可以加载可选的本地网页 Bridge，以显示 ChatGPT、Claude 和 Codex
+网页会话的最小状态。它只监听 `127.0.0.1`，每台机器使用独立配对令牌，并且只发送
+引擎名、页面派生会话键、标题、状态和 URL 路径，不读取或上传正文、提问、回复、
+Cookie 或凭证。
+
+1. 在 Agent Island 的 **Settings > Diagnostics** 点击 **Copy Web Bridge Token**。
+2. 打开 `chrome://extensions`，开启开发者模式，选择“加载已解压的扩展程序”。
+3. 选择仓库内 `extensions/agent-island-web-bridge`，或 App 内
+   `Contents/Resources/WebBridgeExtension`。
+4. 打开扩展选项页，粘贴令牌并保存。
+
+网页 DOM 只能提供启发式信号，所以界面会明确标记为“网页桥接”，不会与 Hook 或
+App transcript 的确认状态混为一谈。完整边界和移除方式见
+[网页 Bridge 说明](docs/WEB_BRIDGE.md)。终端精确能力与回退策略见
+[终端跳转矩阵](docs/TERMINAL_JUMP_MATRIX.md)。
 
 ## 卸载
 

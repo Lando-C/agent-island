@@ -156,6 +156,7 @@ struct AgentSnapshot: Identifiable, Equatable {
     var runningCount: Int
     var completedCount: Int
     var lastUpdated: Date?
+    var evidence: StatusEvidence
 
     var surfaceID: String { "\(family.rawValue)-\(surface.rawValue)" }
     var id: String {
@@ -200,7 +201,8 @@ struct AgentSnapshot: Identifiable, Equatable {
             blockedCount: 0,
             runningCount: 0,
             completedCount: 0,
-            lastUpdated: nil
+            lastUpdated: nil,
+            evidence: .heuristic
         )
     }
 }
@@ -237,10 +239,11 @@ struct AgentEvent: Decodable {
     var toolRisk: String?
     var toolRiskReason: String?
     var autoApprovalEligible: Bool?
+    var origin: String?
     var ts: Double?
 
     private enum CodingKeys: String, CodingKey {
-        case agent, family, surface, channel, status, phase, title, message, session, tool, event, pid, cwd, ts
+        case agent, family, surface, channel, status, phase, title, message, session, tool, event, pid, cwd, ts, origin
         case terminalApp = "terminal_app"
         case terminalBundleID = "terminal_bundle_id"
         case terminalTTY = "terminal_tty"
@@ -1248,6 +1251,7 @@ final class AgentMonitor: ObservableObject {
                 || command.contains("/applications/chatgpt.app/contents/macos/chatgpt")
         }?.pid
         var snapshot = AgentSnapshot.empty(.codex, .app)
+        snapshot.evidence = broker.threadCount > 0 ? .broker : .processProbe
         snapshot.runningCount = max(goals.activeCount, broker.activeCount)
         snapshot.blockedCount = max(goals.blockedCount, broker.blockedCount)
         snapshot.pendingCount = broker.queuedCount
@@ -1298,6 +1302,7 @@ final class AgentMonitor: ObservableObject {
         let cliRows = rows.filter { isCodexCLIProcess($0.command) }
 
         var snapshot = AgentSnapshot.empty(.codex, .cli)
+        snapshot.evidence = .processProbe
         if !cliRows.isEmpty {
             snapshot.phase = .online
             snapshot.detail = "Codex CLI 在线；hook 事件才算工作中"
@@ -1314,6 +1319,7 @@ final class AgentMonitor: ObservableObject {
     private func makeClaudeApp(rows: [ProcessRow], tasks: ClaudeTaskSummary?) -> AgentSnapshot {
         let appRows = claudeAppRows(from: rows)
         var snapshot = AgentSnapshot.empty(.claude, .app)
+        snapshot.evidence = .processProbe
         if !appRows.isEmpty {
             snapshot.phase = .online
             snapshot.detail = "Claude.app 已打开"
@@ -1346,6 +1352,7 @@ final class AgentMonitor: ObservableObject {
         let appPID = claudeAppRows(from: rows).first?.pid
         return activities.map { activity in
             var snapshot = AgentSnapshot.empty(.claude, .app)
+            snapshot.evidence = .appTranscript
             snapshot.sessionID = activity.cliSessionID
             snapshot.phase = activity.phase
             snapshot.title = "Claude App · \(activity.title)"
@@ -1382,6 +1389,7 @@ final class AgentMonitor: ObservableObject {
         }
 
         var snapshot = AgentSnapshot.empty(.claude, .cli)
+        snapshot.evidence = .processProbe
         if !cliRows.isEmpty {
             snapshot.phase = .online
             snapshot.detail = "Claude Code 进程在线；无活动任务信号"
@@ -2756,6 +2764,7 @@ final class AgentMonitor: ObservableObject {
             snapshot.toolRiskReason = event.toolRiskReason
             snapshot.autoApprovalEligible = event.autoApprovalEligible
             snapshot.lastUpdated = Date(timeIntervalSince1970: ts)
+            snapshot.evidence = statusEvidence(for: event)
 
             switch phase {
             case .working:
@@ -2790,6 +2799,14 @@ final class AgentMonitor: ObservableObject {
             }
 
             return snapshot
+        }
+    }
+
+    private func statusEvidence(for event: AgentEvent) -> StatusEvidence {
+        switch event.origin?.lowercased() {
+        case "web_bridge": return .webBridge
+        case "hook", "agent_island_hook": return .hook
+        default: return .hook
         }
     }
 
@@ -3208,6 +3225,7 @@ final class AgentMonitor: ObservableObject {
         let targetPID = rows.first(where: { $0.command.lowercased().contains("codex app-server") })?.pid
         return activities.map { activity in
             var snapshot = AgentSnapshot.empty(.codex, .app)
+            snapshot.evidence = .appTranscript
             snapshot.sessionID = activity.sessionID
             snapshot.phase = activity.phase
             snapshot.title = "Codex App · \(activity.title)"
@@ -3874,6 +3892,11 @@ struct AgentRow: View {
                 Text(detailText)
                     .font(.system(size: 10.5, weight: .medium, design: .rounded))
                     .foregroundStyle(Color.white.opacity(0.58))
+                    .lineLimit(1)
+
+                Text("来源: \(snapshot.evidence.label)")
+                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .foregroundStyle(snapshot.evidence.isAuthoritative ? Color.white.opacity(0.38) : Color.orange.opacity(0.82))
                     .lineLimit(1)
             }
 
@@ -4599,6 +4622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var hookSocketServer = HookSocketServer(store: pendingRequests)
     private lazy var codexBrokerClient = CodexBrokerClient(store: pendingRequests)
     private lazy var monitor = AgentMonitor(codexBrokerClient: codexBrokerClient)
+    private lazy var webBridgeServer = WebBridgeServer { [weak self] in self?.monitor.refreshAsync() }
     private lazy var islandViewModel = IslandViewModel(
         monitor: monitor,
         pendingRequests: pendingRequests
@@ -4657,6 +4681,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupKeyMonitors()
         hookSocketServer.start()
         codexBrokerClient.start()
+        webBridgeServer.start()
         islandLog("ui started")
 
         DispatchQueue.main.async { [weak self] in
@@ -4830,15 +4855,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showSettings() {
         if settingsWindowController == nil {
             settingsWindowController = AgentSettingsWindowController(
+                monitor: monitor,
                 scriptsRoot: scriptsRoot,
                 reinstallHooks: { [weak self] in self?.reinstallHooks() },
                 copyDiagnostics: { [weak self] in self?.copyDiagnosticsReport() },
-                createSupportBundle: { [weak self] in self?.createRedactedSupportBundle() }
+                createSupportBundle: { [weak self] in self?.createRedactedSupportBundle() },
+                copyWebBridgeToken: { [weak self] in self?.copyWebBridgeToken() }
             )
         }
         settingsWindowController?.showWindow(nil)
         settingsWindowController?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func copyWebBridgeToken() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(webBridgeServer.pairingToken, forType: .string)
+        islandLog("web bridge pairing token copied")
     }
 
     private func showChatDetails(_ snapshot: AgentSnapshot) {

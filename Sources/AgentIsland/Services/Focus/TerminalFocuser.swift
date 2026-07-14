@@ -49,69 +49,105 @@ enum TerminalFocuser {
     }
 
     static func focus(_ target: TerminalJumpTarget) -> Bool {
+        let outcome = focusOutcome(target)
+        record(outcome: outcome, target: target)
+        return outcome.success
+    }
+
+    private static func focusOutcome(_ target: TerminalJumpTarget) -> FocusOutcome {
         let normalizedName = normalizedAppName(target.appName)
 
         if normalizedName == "WezTerm",
            let pane = target.sessionIdentifier ?? target.windowID,
            focusWezTermPane(pane) {
-            return activate(target)
+            return FocusOutcome(success: activate(target), route: "WezTerm exact pane")
         }
 
         if normalizedName == "WezTerm",
            focusWezTermByContext(target) {
-            return activate(target)
+            return FocusOutcome(success: activate(target), route: "WezTerm TTY/CWD pane")
         }
 
         if normalizedName == "kitty",
            let window = target.windowID ?? target.sessionIdentifier,
            focusKittyWindow(window) {
-            return activate(target)
+            return FocusOutcome(success: activate(target), route: "kitty exact window")
         }
 
         if normalizedName == "kitty",
            focusKittyByCWD(target.cwd) {
-            return activate(target)
+            return FocusOutcome(success: activate(target), route: "kitty CWD match")
         }
 
         if normalizedName == "Ghostty",
            focusGhostty(target) {
-            return true
+            return FocusOutcome(success: true, route: "Ghostty accessibility/TTY")
         }
 
         if normalizedName == "cmux",
            focusCmux(target) {
-            return true
+            return FocusOutcome(success: true, route: "cmux tab/terminal")
         }
 
         if normalizedName == "iTerm2" {
             if focusITerm(target) {
-                return true
+                return FocusOutcome(success: true, route: "iTerm2 session/TTY")
             }
-            return activate(target)
+            return FocusOutcome(success: activate(target), route: "iTerm2 app fallback")
         }
 
         if normalizedName == "Terminal" {
             if focusTerminalApp(target) {
-                return true
+                return FocusOutcome(success: true, route: "Terminal TTY")
             }
-            return activate(target)
+            return FocusOutcome(success: activate(target), route: "Terminal app fallback")
         }
 
         if focusByBundleOrName(target) {
-            return true
+            return FocusOutcome(success: true, route: "application activation fallback")
         }
 
         if let pid = target.pid {
-            return activateProcess(pid)
+            return FocusOutcome(success: activateProcess(pid), route: "process activation fallback")
         }
 
-        return false
+        return FocusOutcome(success: false, route: "no compatible target")
     }
 
     static func focus(_ target: TmuxJumpTarget) -> Bool {
         let terminalFocused = focus(target.terminal)
         let tmuxFocused = switchTmuxPane(target)
-        return tmuxFocused || terminalFocused
+        let success = tmuxFocused || terminalFocused
+        let detail = tmuxFocused ? "tmux exact pane" : "tmux fallback terminal"
+        record(outcome: FocusOutcome(success: success, route: detail), target: target.terminal)
+        return success
+    }
+
+    private struct FocusOutcome {
+        var success: Bool
+        var route: String
+    }
+
+    private static func record(outcome: FocusOutcome, target: TerminalJumpTarget) {
+        let name = normalizedAppName(target.appName) ?? target.bundleID ?? "unknown terminal"
+        let endpoint = [name, target.tty, target.cwd].compactMap { $0 }.joined(separator: " | ")
+        if outcome.success {
+            TransportHealthStore.shared.markConnected(
+                id: TransportHealthStore.terminalFocusID,
+                name: "Terminal Focus Matrix",
+                protocolVersion: outcome.route,
+                endpoint: endpoint,
+                event: true
+            )
+        } else {
+            TransportHealthStore.shared.markFailure(
+                id: TransportHealthStore.terminalFocusID,
+                name: "Terminal Focus Matrix",
+                state: .degraded,
+                endpoint: endpoint,
+                error: outcome.route
+            )
+        }
     }
 
     private static func focusITerm(_ target: TerminalJumpTarget) -> Bool {

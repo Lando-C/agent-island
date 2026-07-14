@@ -58,6 +58,8 @@ final class TransportHealthStore: ObservableObject {
     static let conversationTailID = "conversation-tail"
     static let processProbeID = "process-probe"
     static let tmuxProbeID = "tmux-probe"
+    static let terminalFocusID = "terminal-focus"
+    static let webBridgeID = "web-bridge"
 
     @Published private(set) var snapshots: [TransportHealthSnapshot]
 
@@ -73,7 +75,9 @@ final class TransportHealthStore: ObservableObject {
             TransportHealthSnapshot.initial(id: Self.codexBrokerID, name: "Codex App Server"),
             TransportHealthSnapshot.initial(id: Self.conversationTailID, name: "Conversation Tail"),
             TransportHealthSnapshot.initial(id: Self.processProbeID, name: "Process / TTY Probe"),
-            TransportHealthSnapshot.initial(id: Self.tmuxProbeID, name: "tmux Pane Probe")
+            TransportHealthSnapshot.initial(id: Self.tmuxProbeID, name: "tmux Pane Probe"),
+            TransportHealthSnapshot.initial(id: Self.terminalFocusID, name: "Terminal Focus Matrix"),
+            TransportHealthSnapshot.initial(id: Self.webBridgeID, name: "Browser Web Bridge")
         ]
         snapshots = initial
         values = Dictionary(uniqueKeysWithValues: initial.map { ($0.id, $0) })

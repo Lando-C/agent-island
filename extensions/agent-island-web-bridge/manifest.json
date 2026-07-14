@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Agent Island Web Bridge",
+  "version": "0.1.0",
+  "description": "Sends minimal local AI web-session status to Agent Island on this Mac.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1:27583/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://codex.openai.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

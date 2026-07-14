@@ -18,6 +18,7 @@ final class HookSocketServer {
     private let store: PendingRequestStore
     private let conversations: ConversationStore
     private let health: TransportHealthStore
+    private let socketPath: String
     private let queue = DispatchQueue(label: "local.agent-island.hook-socket", qos: .userInitiated)
     private let maxPayloadSize = 1_048_576
     private var serverSocket: Int32 = -1
@@ -27,11 +28,13 @@ final class HookSocketServer {
     init(
         store: PendingRequestStore,
         conversations: ConversationStore = .shared,
-        health: TransportHealthStore = .shared
+        health: TransportHealthStore = .shared,
+        socketPath: String = HookSocketServer.socketPath
     ) {
         self.store = store
         self.conversations = conversations
         self.health = health
+        self.socketPath = socketPath
         self.store.addDecisionHandler { [weak self] request, decision in
             guard request.family == .claude,
                   request.responseSchema?.hasPrefix("claude_") == true else { return }
@@ -47,7 +50,7 @@ final class HookSocketServer {
         health.markAttempt(
             id: TransportHealthStore.hookSocketID,
             name: "Claude Hook Socket",
-            endpoint: Self.socketPath
+            endpoint: socketPath
         )
         queue.async { [weak self] in
             self?.startOnQueue()
@@ -67,12 +70,12 @@ final class HookSocketServer {
                 close(pending.fd)
             }
             pendingConnections.removeAll()
-            unlink(Self.socketPath)
+            unlink(socketPath)
             health.markFailure(
                 id: TransportHealthStore.hookSocketID,
                 name: "Claude Hook Socket",
                 state: .disabled,
-                endpoint: Self.socketPath,
+                endpoint: socketPath,
                 error: "Stopped"
             )
         }
@@ -81,7 +84,7 @@ final class HookSocketServer {
     private func startOnQueue() {
         guard serverSocket < 0 else { return }
         do {
-            let url = URL(fileURLWithPath: Self.socketPath)
+            let url = URL(fileURLWithPath: socketPath)
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
@@ -98,7 +101,7 @@ final class HookSocketServer {
 
             var address = sockaddr_un()
             address.sun_family = sa_family_t(AF_UNIX)
-            let pathBytes = Array(Self.socketPath.utf8)
+            let pathBytes = Array(socketPath.utf8)
             guard pathBytes.count < MemoryLayout.size(ofValue: address.sun_path) else {
                 close(fd)
                 throw POSIXError(.ENAMETOOLONG)
@@ -126,7 +129,7 @@ final class HookSocketServer {
                 close(fd)
                 throw POSIXError(.init(rawValue: bindErrno) ?? .EIO)
             }
-            chmod(Self.socketPath, S_IRUSR | S_IWUSR)
+            chmod(socketPath, S_IRUSR | S_IWUSR)
 
             guard listen(fd, SOMAXCONN) == 0 else {
                 let error = POSIXError(.init(rawValue: errno) ?? .EIO)
@@ -148,14 +151,14 @@ final class HookSocketServer {
                 id: TransportHealthStore.hookSocketID,
                 name: "Claude Hook Socket",
                 protocolVersion: "hook-json/v1",
-                endpoint: Self.socketPath
+                endpoint: socketPath
             )
-            islandLog("hook socket started path=\(Self.socketPath)")
+            islandLog("hook socket started path=\(socketPath)")
         } catch {
             health.markFailure(
                 id: TransportHealthStore.hookSocketID,
                 name: "Claude Hook Socket",
-                endpoint: Self.socketPath,
+                endpoint: socketPath,
                 error: error.localizedDescription
             )
             islandLog("hook socket start failed error=\(error.localizedDescription)")

@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Agent Island Web Bridge</title>
+    <style>
+      body { font: 14px -apple-system, BlinkMacSystemFont, sans-serif; margin: 28px; max-width: 560px; color: #202124; }
+      input { box-sizing: border-box; width: 100%; padding: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      button { margin-top: 12px; padding: 8px 14px; }
+      #status { color: #137333; min-height: 20px; }
+    </style>
+  </head>
+  <body>
+    <h1>Agent Island Web Bridge</h1>
+    <p>Paste the pairing token copied from Agent Island Settings &gt; Diagnostics. It is only sent to Agent Island on 127.0.0.1.</p>
+    <label for="token">Pairing token</label>
+    <input id="token" type="password" autocomplete="off" spellcheck="false">
+    <button id="save">Save</button>
+    <p id="status"></p>
+    <script src="options.js"></script>
+  </body>
+</html>

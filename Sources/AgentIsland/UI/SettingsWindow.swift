@@ -14,16 +14,20 @@ enum AgentIslandSettingsKeys {
 
 final class AgentSettingsWindowController: NSWindowController {
     init(
+        monitor: AgentMonitor,
         scriptsRoot: URL,
         reinstallHooks: @escaping () -> Void,
         copyDiagnostics: @escaping () -> Void,
-        createSupportBundle: @escaping () -> Void
+        createSupportBundle: @escaping () -> Void,
+        copyWebBridgeToken: @escaping () -> Void
     ) {
         let view = AgentSettingsView(
+            monitor: monitor,
             scriptsRoot: scriptsRoot,
             reinstallHooks: reinstallHooks,
             copyDiagnostics: copyDiagnostics,
             createSupportBundle: createSupportBundle,
+            copyWebBridgeToken: copyWebBridgeToken,
             transportHealth: .shared
         )
         let hostingView = NSHostingView(rootView: view)
@@ -66,10 +70,12 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 }
 
 struct AgentSettingsView: View {
+    @ObservedObject var monitor: AgentMonitor
     let scriptsRoot: URL
     let reinstallHooks: () -> Void
     let copyDiagnostics: () -> Void
     let createSupportBundle: () -> Void
+    let copyWebBridgeToken: () -> Void
     @ObservedObject var transportHealth: TransportHealthStore
 
     @State private var selectedTab: SettingsTab = .diagnostics
@@ -332,6 +338,9 @@ struct AgentSettingsView: View {
                 Button("Create Redacted Support Bundle") {
                     createSupportBundle()
                 }
+                Button("Copy Web Bridge Token") {
+                    copyWebBridgeToken()
+                }
                 Spacer()
                 Button("Open Status Folder") {
                     NSWorkspace.shared.open(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agent-island"))
@@ -346,6 +355,29 @@ struct AgentSettingsView: View {
                 } else {
                     ForEach(transportHealth.snapshots) { transport in
                         transportRow(transport)
+                    }
+                }
+            }
+
+            settingSection("当前状态来源") {
+                let active = monitor.snapshots.filter { $0.phase != .offline && $0.phase != .available }
+                if active.isEmpty {
+                    Text("当前没有可展示的会话状态。")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(active) { snapshot in
+                        HStack(spacing: 8) {
+                            Image(systemName: snapshot.evidence.isAuthoritative ? "checkmark.seal" : "questionmark.diamond")
+                                .foregroundColor(snapshot.evidence.isAuthoritative ? .green : .orange)
+                            Text(snapshot.title)
+                                .font(.system(size: 11, weight: .semibold))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text(snapshot.evidence.label)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
                     }
                 }
             }

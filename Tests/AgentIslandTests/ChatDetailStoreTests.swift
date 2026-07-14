@@ -50,6 +50,24 @@ private func incrementalConversationFixture() -> Bool {
         && second.items.map(\.body) == ["Hello world"]
 }
 
+private func codexTranscriptActivityFixture() -> Bool {
+    let now = Date(timeIntervalSince1970: 1_800_000_000)
+    let log = """
+    {"type":"event_msg","payload":{"type":"task_started"}}
+    {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Refactor the status detector"}]}}
+    {"type":"response_item","payload":{"type":"custom_tool_call","name":"exec"}}
+    """
+    guard let activity = CodexTranscriptProbe.activity(
+        sessionID: "70266e98-3300-4871-8ec4-8edba1ee8a24",
+        data: Data(log.utf8),
+        modified: now,
+        now: now
+    ) else { return false }
+    return activity.phase == .working
+        && activity.title == "Refactor the status detector"
+        && activity.detail == "工具: exec"
+}
+
 #if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Chat detail store")
 struct ChatDetailStoreTests {
@@ -67,6 +85,11 @@ struct ChatDetailStoreTests {
     func partialLinesWaitForCompletion() {
         #expect(incrementalConversationFixture())
     }
+
+    @Test("Codex app-server transcript reports an active tool call")
+    func codexTranscriptActivity() {
+        #expect(codexTranscriptActivityFixture())
+    }
 }
 #elseif canImport(XCTest)
 final class ChatDetailStoreTests: XCTestCase {
@@ -80,6 +103,10 @@ final class ChatDetailStoreTests: XCTestCase {
 
     func testPartialJSONLLinesWaitForCompletion() {
         XCTAssertTrue(incrementalConversationFixture())
+    }
+
+    func testCodexTranscriptActivity() {
+        XCTAssertTrue(codexTranscriptActivityFixture())
     }
 }
 #endif

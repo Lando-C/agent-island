@@ -1016,6 +1016,8 @@ final class AgentMonitor: ObservableObject {
     private var lastClaudeTaskScan = Date.distantPast
     private var cachedCodexGoalSummary = CodexGoalSummary()
     private var lastCodexGoalScan = Date.distantPast
+    private var cachedCodexTranscriptActivities: [CodexTranscriptActivity] = []
+    private var lastCodexTranscriptScan = Date.distantPast
     private var cachedClaudeScienceSummary = ClaudeScienceSummary()
     private var lastClaudeScienceScan = Date.distantPast
     private var cachedDiskConversationInfo: [String: ConversationInfo] = [:]
@@ -1111,10 +1113,12 @@ final class AgentMonitor: ObservableObject {
         let codexGoals = readCodexGoalSummaryCached()
         let codexBrokerThreads = readCodexBrokerThreads()
         let codexBroker = summarizeCodexBrokerThreads(codexBrokerThreads)
+        let codexTranscriptActivities = readCodexTranscriptActivitiesCached()
         let science = readClaudeScienceSummaryCached(rows: rows)
         let chatGPT = readChatGPTSummary()
         let conversations = readConversationInfo(codexBrokerThreads: codexBrokerThreads)
         let eventSnapshots = makeEventSnapshots(from: events, conversations: conversations)
+        let transcriptSnapshots = makeCodexTranscriptSnapshots(codexTranscriptActivities, rows: rows)
         let eventSurfaceIDs = Set(eventSnapshots.map(\.surfaceID))
         let appEventSurfaceIDs = Set(eventSnapshots.filter { $0.surface == .app }.map { "\($0.family.rawValue)-\($0.surface.rawValue)" })
 
@@ -1140,10 +1144,15 @@ final class AgentMonitor: ObservableObject {
                appEventSurfaceIDs.contains("\(snapshot.family.rawValue)-app") {
                 return false
             }
+            if snapshot.family == .codex,
+               snapshot.surface == .app,
+               !transcriptSnapshots.isEmpty {
+                return false
+            }
             return true
         }
 
-        let next = (eventSnapshots + fallbackSnapshots)
+        let next = (eventSnapshots + transcriptSnapshots + fallbackSnapshots)
             .sorted { lhs, rhs in
                 if lhs.phase.rank != rhs.phase.rank {
                     return lhs.phase.rank < rhs.phase.rank
@@ -3065,6 +3074,83 @@ final class AgentMonitor: ObservableObject {
             lastCodexGoalScan = now
         }
         return cachedCodexGoalSummary
+    }
+
+    private func readCodexTranscriptActivitiesCached() -> [CodexTranscriptActivity] {
+        let now = Date()
+        if now.timeIntervalSince(lastCodexTranscriptScan) >= 2 {
+            let activities = CodexTranscriptProbe.recentActivities(
+                root: home.appendingPathComponent(".codex/sessions"),
+                now: now
+            )
+            let titles = readCodexThreadTitles(for: activities.map(\.sessionID))
+            cachedCodexTranscriptActivities = activities.map { activity in
+                guard let title = titles[activity.sessionID],
+                      let meaningful = AgentText.meaningfulConversationTitle(title) else {
+                    return activity
+                }
+                var enriched = activity
+                enriched.title = AgentText.compact(meaningful, limit: 72)
+                return enriched
+            }
+            lastCodexTranscriptScan = now
+        }
+        return cachedCodexTranscriptActivities
+    }
+
+    private func readCodexThreadTitles(for sessionIDs: [String]) -> [String: String] {
+        let unique = Array(Set(sessionIDs.filter { !$0.isEmpty })).prefix(24)
+        guard !unique.isEmpty else { return [:] }
+        let database = home.appendingPathComponent(".codex/state_5.sqlite").path
+        guard FileManager.default.fileExists(atPath: database) else { return [:] }
+        let quotedIDs = unique.map { "'\($0.replacingOccurrences(of: "'", with: "''"))'" }.joined(separator: ",")
+        let sql = """
+        select id, replace(replace(replace(title, char(10), ' '), char(13), ' '), '|', '/')
+        from threads
+        where id in (\(quotedIDs));
+        """
+        return runCommand(
+            executable: "/usr/bin/sqlite3",
+            arguments: ["file:\(database)?mode=ro&immutable=1", sql]
+        )
+        .split(separator: "\n")
+        .reduce(into: [:]) { result, line in
+            let parts = line.split(separator: "|", maxSplits: 1).map(String.init)
+            guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty else { return }
+            result[parts[0]] = parts[1]
+        }
+    }
+
+    private func makeCodexTranscriptSnapshots(
+        _ activities: [CodexTranscriptActivity],
+        rows: [ProcessRow]
+    ) -> [AgentSnapshot] {
+        let targetPID = rows.first(where: { $0.command.lowercased().contains("codex app-server") })?.pid
+        return activities.map { activity in
+            var snapshot = AgentSnapshot.empty(.codex, .app)
+            snapshot.sessionID = activity.sessionID
+            snapshot.phase = activity.phase
+            snapshot.title = "Codex App · \(activity.title)"
+            snapshot.detail = [activity.detail, activity.cwd.map { URL(fileURLWithPath: $0).lastPathComponent }]
+                .compactMap { $0 }
+                .joined(separator: " · ")
+            snapshot.jumpTarget = .url("codex://threads/\(activity.sessionID)")
+            snapshot.targetPID = targetPID
+            snapshot.lastUpdated = activity.lastUpdated
+            switch activity.phase {
+            case .working, .thinking:
+                snapshot.runningCount = 1
+            case .needsAttention, .error:
+                snapshot.blockedCount = 1
+            case .queued:
+                snapshot.pendingCount = 1
+            case .done:
+                snapshot.completedCount = 1
+            case .online, .idle, .available, .offline:
+                break
+            }
+            return snapshot
+        }
     }
 
     private func readClaudeScienceSummary(rows: [ProcessRow]) -> ClaudeScienceSummary {

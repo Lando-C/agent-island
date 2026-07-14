@@ -10,7 +10,7 @@ import XCTest
 #endif
 @testable import AgentIsland
 
-private func hookSocketApprovalRoundTrip() -> Bool {
+private func hookSocketApprovalRoundTrip() -> String? {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("agent-island-hook-\(UUID().uuidString)", isDirectory: true)
     let socketPath = root.appendingPathComponent("hook.sock").path
@@ -28,7 +28,7 @@ private func hookSocketApprovalRoundTrip() -> Bool {
     server.start()
     guard waitUntil(timeout: 2, condition: { FileManager.default.fileExists(atPath: socketPath) }) else {
         server.stop()
-        return false
+        return "listener socket was not created"
     }
 
     let response = LockedData()
@@ -51,7 +51,7 @@ private func hookSocketApprovalRoundTrip() -> Bool {
     }) ? stateQueue.sync { store.requests.first } : nil
     guard let pending else {
         server.stop()
-        return false
+        return "pending request did not reach the store"
     }
     stateQueue.sync { store.allow(pending) }
     let completed = waitUntil(timeout: 2, condition: { !response.value.isEmpty })
@@ -61,10 +61,14 @@ private func hookSocketApprovalRoundTrip() -> Bool {
           let rootJSON = try? JSONSerialization.jsonObject(with: response.value) as? [String: Any],
           let output = rootJSON["hookSpecificOutput"] as? [String: Any],
           let decision = output["decision"] as? [String: String] else {
-        return false
+        let status = stateQueue.sync { store.requests.first?.status.rawValue ?? "missing" }
+        return "no socket response after allow; store status=\(status)"
     }
-    return decision["behavior"] == "allow"
-        && stateQueue.sync { store.requests.first?.status == .allowed }
+    guard decision["behavior"] == "allow" else { return "response did not contain allow decision" }
+    guard stateQueue.sync(execute: { store.requests.first?.status == .allowed }) else {
+        return "store did not retain allowed status"
+    }
+    return nil
 }
 
 private func waitUntil(timeout: TimeInterval, condition: @escaping () -> Bool) -> Bool {
@@ -127,13 +131,13 @@ private final class LockedData {
 struct HookSocketServerEndToEndTests {
     @Test("Claude approval returns a response through the live socket")
     func approvalRoundTrip() {
-        #expect(hookSocketApprovalRoundTrip())
+        #expect(hookSocketApprovalRoundTrip() == nil)
     }
 }
 #elseif canImport(XCTest)
 final class HookSocketServerEndToEndTests: XCTestCase {
     func testClaudeApprovalReturnsResponseThroughLiveSocket() {
-        XCTAssertTrue(hookSocketApprovalRoundTrip())
+        XCTAssertNil(hookSocketApprovalRoundTrip())
     }
 }
 #endif

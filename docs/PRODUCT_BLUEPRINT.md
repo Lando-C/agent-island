@@ -144,7 +144,10 @@ Shell 策略：
   - `tool_risk_reason`
   - `auto_approval_eligible`
 - 只有用户显式启用时，Claude `PermissionRequest` 的只读工具才会自动 allow。
-- Codex approval response schema 尚未完全验证，所以仍保持 status-only。
+- Codex 当前四类交互请求已用 `codex-cli 0.145.0` 生成 schema 和脱敏
+  fixture 验证后开放写回；未知方法、畸形字段和未验证 decision 继续
+  fail-closed。真实 broker 帧和后续 provider 版本仍需单独审查，不能从现有
+  fixture 推断扩大支持范围。
 
 ## 离岛与吉祥物
 

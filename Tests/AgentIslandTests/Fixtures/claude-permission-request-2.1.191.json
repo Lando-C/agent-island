@@ -1,0 +1,85 @@
+{
+  "fixtureVersion": 1,
+  "provider": "Claude Code",
+  "providerVersion": "2.1.191",
+  "provenance": {
+    "kind": "documentation-derived-and-local-version-pinned",
+    "source": "Claude Code Hooks Reference",
+    "url": "https://code.claude.com/docs/en/hooks",
+    "verifiedOn": "2026-07-28",
+    "redaction": "Session, transcript path, workspace path, and tool input were replaced with deterministic fixture values."
+  },
+  "rawHook": {
+    "session_id": "session-redacted",
+    "transcript_path": "/workspace/redacted/transcript.jsonl",
+    "cwd": "/workspace/redacted",
+    "permission_mode": "default",
+    "hook_event_name": "PermissionRequest",
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/workspace/redacted/README.md"
+    }
+  },
+  "bridgeFrame": {
+    "surface": "cli",
+    "event": "PermissionRequest",
+    "status": "needs_attention",
+    "title": "Claude requests Read",
+    "message": "Review the read request.",
+    "session": "session-redacted",
+    "raw_session": "session-redacted",
+    "primary_session": "session-redacted",
+    "parent_session": "",
+    "request_id": "",
+    "tool": "Read",
+    "tool_input_summary": "file_path: /workspace/redacted/README.md",
+    "tool_risk": "safe_read",
+    "tool_risk_reason": "Read-only file access",
+    "ts": 1800000000
+  },
+  "normalizedRequest": {
+    "type": "hook_request",
+    "source": "claude",
+    "surface": "cli",
+    "event": "PermissionRequest",
+    "status": "needs_attention",
+    "title": "Claude requests Read",
+    "message": "Review the read request.",
+    "session": "session-redacted",
+    "raw_session": "session-redacted",
+    "primary_session": "session-redacted",
+    "parent_session": "",
+    "request_id": "",
+    "tool": "Read",
+    "tool_input_summary": "file_path: /workspace/redacted/README.md",
+    "tool_risk": "safe_read",
+    "tool_risk_reason": "Read-only file access",
+    "response_schema": "claude_permission_request",
+    "tool_input_json": "{\"file_path\":\"/workspace/redacted/README.md\"}",
+    "ts": 1800000000
+  },
+  "decisions": [
+    {
+      "type": "allow",
+      "expectedResponse": {
+        "hookSpecificOutput": {
+          "hookEventName": "PermissionRequest",
+          "decision": {
+            "behavior": "allow"
+          }
+        }
+      }
+    },
+    {
+      "type": "deny",
+      "expectedResponse": {
+        "hookSpecificOutput": {
+          "hookEventName": "PermissionRequest",
+          "decision": {
+            "behavior": "deny"
+          }
+        }
+      }
+    }
+  ]
+}

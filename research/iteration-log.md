@@ -719,3 +719,71 @@
   live broker 帧，用于发现 provider version 与生成 schema 之间的偏差。
 - `acceptForSession`、execpolicy amendment、network policy amendment 和
   permission session scope 尚未开放给岛内 UI，不从本轮 fixture 推断支持。
+
+## 2026-07-28 Iteration 16 - Provider compatibility and terminal capability contracts
+
+目标：
+
+- 把 Claude Hook 和 Browser Bridge 的 provider/version 变化变成可回放的
+  兼容性测试，而不是依赖人工发现上游已经漂移。
+- 当网页 selector、detector 或协议版本不匹配时，显式报告 degraded，并保留
+  最后一条可信会话状态。
+- 为终端 exact/context/fallback/unavailable 建立不依赖本机安装环境的保守
+  判定契约，覆盖 helper 缺失、多窗口歧义和过期 metadata。
+
+Claude fixture：
+
+- 新增 Claude Code `2.1.191` 版本锚定的三类脱敏 fixture：
+  `PermissionRequest`、`PreToolUse/AskUserQuestion` 和 `Elicitation`。
+- Fixture 同时保留 documentation-derived provenance、脱敏说明、原始 Hook、
+  bridge frame、归一化 socket request 和预期写回。
+- Python 回放直接调用生产 `agent-island-bridge.py` 的 event/normalizer；
+  Swift 回放直接调用生产 `PendingRequestStore` 和
+  `HookSocketServer.responseData`。
+- 未知 Claude 交互仍映射为 `status_only`；fixture 不冒充真实 stdin 抓包，
+  后续仍需用脱敏 live frame 对比版本偏差。
+
+Browser Bridge v3：
+
+- 事件新增 `detector_version`、provider-specific `selector_profile` 和
+  `selector_state`。
+- ChatGPT、Claude、Codex Web 只有在主页面和 composer anchor 组均存在时，
+  才能把 stop/approval control 的有无解释为会话状态。
+- 协议、detector、profile 或 selector 漂移统一写入 Transport Diagnostics
+  的 degraded 状态；degraded frame 不写 `events.jsonl`，不会把未知状态
+  转成假的 idle、working 或 needs-attention。
+- v1/v2 仍可解码以给出升级诊断，但因没有 selector provenance，不再覆盖
+  可信 session truth。
+- 新增三类正常 provider fixture 和一类 selector-drift fixture；扩展版本
+  升至 `0.3.0`。
+
+终端能力契约：
+
+- 新增 `TerminalFocusCapabilityResolver`，只在 helper 可用、metadata 新鲜且
+  stable ID 唯一时返回 `exact`。
+- 唯一 TTY/CWD 只返回 `context`；helper 缺失、metadata 过期、重复 ID 和
+  多窗口 TTY/CWD 歧义均降为 `fallback`，连应用级 fallback 都不存在时为
+  `unavailable`。
+- 当前契约和 fixture 是 terminal adapter 的离线验收边界；后续仍需把各终端
+  的实时 metadata adapter 接到这一共享判定，并完成真机矩阵。
+
+验证：
+
+- Claude Python fixture replay：2 个测试全部通过。
+- macOS 15.4 SDK 下 Debug 主程序、全部 Swift 测试 target 和 Release 构建
+  通过。
+- Browser Bridge JavaScript、manifest/fixture JSON、Python 和 Shell 语法
+  检查通过。
+- Session reducer、expansion controller 回归通过；Codex broker probe 因
+  当前没有 live broker socket 正常跳过。
+- 本机仍只有 Command Line Tools；XCTest runner 缺少完整 Xcode PlatformPath，
+  真实 XCTest 执行继续由 GitHub Actions macOS runner 强制完成。
+
+遗留边界：
+
+- Claude fixture 是官方 Hooks Reference 派生并按本机 provider 版本锚定，
+  Browser fixture 是合成的 selector contract；两者都仍需要真实脱敏样本。
+- Browser selector 只能作为非权威网页信号，不能扫描对话文字或替代 Hook/
+  broker 审批协议。
+- Terminal capability resolver 尚未替代各 terminal focuser 的运行时探针；
+  真机 exact/context/fallback 矩阵仍是下一轮工作。

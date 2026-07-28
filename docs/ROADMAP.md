@@ -23,14 +23,21 @@ Implemented:
   approval, file approval, and permissions approval. Unknown methods, malformed
   required fields, invalid permission payloads, and mismatched decision types
   fail closed.
+- Provider-version fixture replay for Claude Code `PermissionRequest`,
+  `AskUserQuestion`, and `Elicitation`, covering both the production Python
+  normalizer and Swift response encoder.
+- Browser Bridge v3 selector-profile fixtures for ChatGPT, Claude, and Codex
+  Web. Protocol, detector, or selector drift is reported as a degraded
+  capability and cannot overwrite the latest trusted session event.
 
 Still required:
 
 - Capture redacted live Codex broker frames across supported provider versions
   and compare them with the schema-derived fixtures. The client must not broaden
   write-back from inferred or newly observed payloads without fixture review.
-- Add provider-version fixture replay for Claude hooks and Browser Bridge DOM
-  selectors, so a UI/provider update becomes a visible degraded capability.
+- Capture redacted live Claude hook stdin frames and browser selector evidence
+  across provider versions. Current Claude fixtures are documentation-derived
+  and version-pinned; Browser fixtures are synthetic selector contracts.
 - Add a safe app/web conversation adapter where a provider exposes a local event
   API. Do not use screen scraping as a source of truth.
 
@@ -44,14 +51,17 @@ Implemented:
   activation fallback routes with the actual route shown in Diagnostics.
 - Conservative smart suppression when the matching app, browser page, terminal,
   or pane is already foregrounded.
+- Offline terminal capability fixtures for missing helpers, stale metadata,
+  duplicate stable IDs, multiple windows, and ambiguous TTY/CWD matches. The
+  shared contract classifies only fresh, unique identities as exact or context.
 
 Still required:
 
 - Real-machine regression matrix for Ghostty, WezTerm, kitty, Warp, and Kaku.
 - Verified Warp workspace/tab and Kaku pane targeting. Until a stable local API
   is available, they remain application-activation fallbacks.
-- Per-terminal capability fixtures for helper absence, multiple windows, and
-  stale terminal metadata.
+- Connect terminal-specific metadata adapters to the shared capability contract;
+  the current fixtures validate the policy independently of installed apps.
 
 ## P2: Explainability and Product Operations
 

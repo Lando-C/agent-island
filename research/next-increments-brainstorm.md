@@ -1,5 +1,9 @@
 # Agent Island 下一阶段增量 Brainstorm
 
+> 历史设计材料：其中若干“下一步”已经实现。请先用
+> `docs/ROADMAP.md` 和 `research/iteration-log.md` 对齐当前状态，再从本文件
+> 选择尚未落地的想法，避免重复开发。
+
 日期：2026-07-09
 
 ## 核心定位

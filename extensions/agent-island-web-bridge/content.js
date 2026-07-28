@@ -4,6 +4,16 @@
     (hostname.includes("codex") ? "codex" : "chatgpt");
   const selectors = {
     chatgpt: {
+      profile: "chatgpt-web-2026-07",
+      anchors: [
+        ['main'],
+        [
+          '#prompt-textarea',
+          'textarea[data-testid*="prompt" i]',
+          '[contenteditable="true"][data-testid*="composer" i]',
+          'main [contenteditable="true"]'
+        ]
+      ],
       working: [
         'button[data-testid="stop-button"]',
         '[data-testid*="stop-generation"]',
@@ -18,6 +28,11 @@
       title: ['[data-testid="conversation-title"]', 'main h1', 'h1']
     },
     claude: {
+      profile: "claude-web-2026-07",
+      anchors: [
+        ['main'],
+        ['[contenteditable="true"]', 'fieldset textarea']
+      ],
       working: [
         'button[aria-label*="Stop" i]',
         'button[title*="Stop" i]',
@@ -31,6 +46,11 @@
       title: ['main h1', 'h1']
     },
     codex: {
+      profile: "codex-web-2026-07",
+      anchors: [
+        ['main'],
+        ['[contenteditable="true"]', 'textarea']
+      ],
       working: [
         'button[aria-label*="Stop" i]',
         'button[title*="Stop" i]',
@@ -46,11 +66,16 @@
   };
 
   const provider = selectors[source];
+  const detectorVersion = "0.3.0";
   let lastKey = "";
   let timer;
 
   function hasAny(selectorList) {
     return selectorList.some((selector) => document.querySelector(selector));
+  }
+
+  function hasEveryAnchorGroup(selectorGroups) {
+    return selectorGroups.every((group) => hasAny(group));
   }
 
   function firstText(selectorList) {
@@ -74,6 +99,12 @@
     return { phase: "idle", detail: "No browser generation control is visible" };
   }
 
+  function selectorState() {
+    // Anchors establish that the known provider UI contract is present before
+    // absence of a working/approval control can be interpreted as idle.
+    return hasEveryAnchorGroup(provider.anchors) ? "verified" : "degraded";
+  }
+
   function conversationPath() {
     // Search parameters can contain shared content or tracking data. The bridge
     // needs a stable tab/session key, not the query string.
@@ -85,18 +116,24 @@
   }
 
   function publish() {
-    const next = status();
+    const state = selectorState();
+    const next = state === "verified"
+      ? status()
+      : { phase: "idle", detail: "Provider page does not match the bundled selector profile" };
     const path = conversationPath();
     const payload = {
-      version: 2,
+      version: 3,
       source,
       session_id: path,
       title: title().slice(0, 120),
       phase: next.phase,
       detail: next.detail,
-      url: location.origin + path
+      url: location.origin + path,
+      detector_version: detectorVersion,
+      selector_profile: provider.profile,
+      selector_state: state
     };
-    const key = `${payload.session_id}|${payload.phase}|${payload.title}`;
+    const key = `${payload.session_id}|${payload.phase}|${payload.title}|${state}`;
     if (key === lastKey) return;
     lastKey = key;
     chrome.runtime.sendMessage({ type: "agent-island-status", payload });

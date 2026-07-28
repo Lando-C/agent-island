@@ -14,10 +14,16 @@ Island app running on the same Mac.
   replies, tool input, query parameters, or cookies.
 - Web-page state is a DOM heuristic. Agent Island labels it `网页桥接`; it is
   not equivalent to a CLI Hook or an app transcript confirmation.
-- Extension v0.2 detects only visible stop-generation controls and actual modal
+- Extension v0.3 detects only visible stop-generation controls and actual modal
   approval controls. It deliberately does not scan conversation text for words
   such as “allow” or “approve”, preventing a normal prompt/reply from being
   reported as a human handoff.
+- Every v3 event names the detector version, a provider-specific versioned
+  selector profile, and whether the page still matches that profile. Missing
+  anchors, an unknown profile, or a protocol/detector version mismatch marks
+  Browser Web Bridge `Degraded` in Diagnostics and does not overwrite the last
+  trustworthy session event. Older v1/v2 extensions are decoded only to show an
+  explicit upgrade diagnosis.
 
 ## Install the extension
 

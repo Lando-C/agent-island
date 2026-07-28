@@ -1,0 +1,143 @@
+{
+  "fixtureVersion": 1,
+  "provider": "Claude Code",
+  "providerVersion": "2.1.191",
+  "provenance": {
+    "kind": "documentation-derived-and-local-version-pinned",
+    "source": "Claude Code Hooks Reference",
+    "url": "https://code.claude.com/docs/en/hooks",
+    "verifiedOn": "2026-07-28",
+    "redaction": "Session, transcript path, workspace path, MCP server name, and form content were replaced with deterministic fixture values."
+  },
+  "rawHook": {
+    "session_id": "session-redacted",
+    "transcript_path": "/workspace/redacted/transcript.jsonl",
+    "cwd": "/workspace/redacted",
+    "permission_mode": "default",
+    "hook_event_name": "Elicitation",
+    "mcp_server_name": "fixture-mcp",
+    "message": "Choose a deployment environment.",
+    "mode": "form",
+    "elicitation_id": "elicitation-redacted",
+    "requested_schema": {
+      "type": "object",
+      "properties": {
+        "environment": {
+          "type": "string",
+          "title": "Environment",
+          "description": "Select the target environment.",
+          "enum": [
+            "staging",
+            "production"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "title": "Note",
+          "description": "Add a deployment note."
+        }
+      },
+      "required": [
+        "environment"
+      ]
+    }
+  },
+  "bridgeFrame": {
+    "surface": "cli",
+    "event": "Elicitation",
+    "status": "needs_attention",
+    "title": "Claude needs MCP input",
+    "message": "Choose a deployment environment.",
+    "session": "session-redacted",
+    "raw_session": "session-redacted",
+    "primary_session": "session-redacted",
+    "parent_session": "",
+    "request_id": "elicitation-redacted",
+    "tool": "fixture-mcp",
+    "tool_input_summary": "Choose a deployment environment.",
+    "tool_risk": "",
+    "tool_risk_reason": "",
+    "ts": 1800000002
+  },
+  "normalizedRequest": {
+    "type": "hook_request",
+    "source": "claude",
+    "surface": "cli",
+    "event": "Elicitation",
+    "status": "needs_attention",
+    "title": "Claude needs MCP input",
+    "message": "Choose a deployment environment.",
+    "session": "session-redacted",
+    "raw_session": "session-redacted",
+    "primary_session": "session-redacted",
+    "parent_session": "",
+    "request_id": "elicitation-redacted",
+    "tool": "fixture-mcp",
+    "tool_input_summary": "Choose a deployment environment.",
+    "tool_risk": "",
+    "tool_risk_reason": "",
+    "response_schema": "claude_elicitation",
+    "question": "Select the target environment.",
+    "options": [
+      "staging",
+      "production"
+    ],
+    "questions": [
+      {
+        "id": "environment",
+        "header": "Environment",
+        "prompt": "Select the target environment.",
+        "options": [
+          "staging",
+          "production"
+        ],
+        "multiSelect": false,
+        "isSecret": false,
+        "allowsOther": false
+      },
+      {
+        "id": "note",
+        "header": "Note",
+        "prompt": "Add a deployment note.",
+        "options": [],
+        "multiSelect": false,
+        "isSecret": false,
+        "allowsOther": false
+      }
+    ],
+    "requested_schema_json": "{\"type\":\"object\",\"properties\":{\"environment\":{\"type\":\"string\",\"title\":\"Environment\",\"description\":\"Select the target environment.\",\"enum\":[\"staging\",\"production\"]},\"note\":{\"type\":\"string\",\"title\":\"Note\",\"description\":\"Add a deployment note.\"}},\"required\":[\"environment\"]}",
+    "ts": 1800000002
+  },
+  "decisions": [
+    {
+      "type": "answer",
+      "answers": {
+        "environment": [
+          "staging"
+        ],
+        "note": [
+          "Fixture replay"
+        ]
+      },
+      "expectedResponse": {
+        "hookSpecificOutput": {
+          "hookEventName": "Elicitation",
+          "action": "accept",
+          "content": {
+            "environment": "staging",
+            "note": "Fixture replay"
+          }
+        }
+      }
+    },
+    {
+      "type": "deny",
+      "expectedResponse": {
+        "hookSpecificOutput": {
+          "hookEventName": "Elicitation",
+          "action": "decline"
+        }
+      }
+    }
+  ]
+}

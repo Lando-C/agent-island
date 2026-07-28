@@ -1,0 +1,15 @@
+{
+  "fixture_version": 1,
+  "fixture_origin": "synthetic redacted selector-profile contract; no page content",
+  "extension_version": "0.3.0",
+  "version": 3,
+  "source": "codex",
+  "session_id": "/tasks/redacted-session",
+  "title": "Redacted task",
+  "phase": "needs_attention",
+  "detail": "Browser approval control is visible",
+  "url": "https://codex.openai.com/tasks/redacted-session",
+  "detector_version": "0.3.0",
+  "selector_profile": "codex-web-2026-07",
+  "selector_state": "verified"
+}

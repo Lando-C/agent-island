@@ -24,7 +24,10 @@ jobs:
         run: scripts/test-swift --require-xctest
 
       - name: Python syntax
-        run: python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe
+        run: python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe Tests/AgentIslandTests/test_claude_hook_fixture_replay.py
+
+      - name: Claude hook fixture replay
+        run: python3 Tests/AgentIslandTests/test_claude_hook_fixture_replay.py
 
       - name: Browser bridge extension syntax
         run: |

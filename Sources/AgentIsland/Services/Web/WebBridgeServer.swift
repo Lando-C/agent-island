@@ -12,30 +12,40 @@ struct BrowserBridgePayload: Decodable {
     var phase: String
     var detail: String?
     var url: String?
+    var detectorVersion: String?
+    var selectorProfile: String?
+    var selectorState: String?
 
     enum CodingKeys: String, CodingKey {
         case version, source, title, phase, detail, url
         case sessionID = "session_id"
+        case detectorVersion = "detector_version"
+        case selectorProfile = "selector_profile"
+        case selectorState = "selector_state"
     }
 }
 
+enum BrowserBridgeDisposition: Equatable {
+    case accepted(family: String, phase: String)
+    case degraded(family: String?, reason: String)
+    case rejected(reason: String)
+}
+
 enum BrowserBridgeProtocol {
+    static let currentVersion = 3
+    static let detectorVersion = "0.3.0"
+    static let selectorProfiles = [
+        "chatgpt": "chatgpt-web-2026-07",
+        "claude": "claude-web-2026-07",
+        "codex": "codex-web-2026-07"
+    ]
+
     static func accepts(version: Int) -> Bool {
-        version == 1 || version == 2
+        (1...currentVersion).contains(version)
     }
 
     static func normalized(source: String, phase: String) -> (family: String, phase: String)? {
-        let sourceValue = source.lowercased()
-        let family: String
-        if sourceValue.contains("codex") {
-            family = "codex"
-        } else if sourceValue.contains("claude") {
-            family = "claude"
-        } else if sourceValue.contains("chatgpt") || sourceValue.contains("openai") {
-            family = "chatgpt"
-        } else {
-            return nil
-        }
+        guard let family = family(source: source) else { return nil }
 
         let phaseValue = phase.lowercased().replacingOccurrences(of: "_", with: "")
         switch phaseValue {
@@ -46,9 +56,63 @@ enum BrowserBridgeProtocol {
         }
     }
 
+    static func evaluate(_ payload: BrowserBridgePayload) -> BrowserBridgeDisposition {
+        guard accepts(version: payload.version) else {
+            return .degraded(
+                family: family(source: payload.source),
+                reason: "Unsupported Browser Bridge protocol v\(payload.version); expected v1-v\(currentVersion)"
+            )
+        }
+        guard let normalized = normalized(source: payload.source, phase: payload.phase) else {
+            return .rejected(reason: "Unsupported Browser Bridge source or phase")
+        }
+
+        // v1/v2 remain decodable so Diagnostics can explain the upgrade. They
+        // cannot prove which provider-specific selector contract produced the
+        // status, so they must not update session truth.
+        guard payload.version >= 3 else {
+            return .degraded(
+                family: normalized.family,
+                reason: "Browser Bridge v\(payload.version) lacks selector provenance; update the extension to v\(currentVersion)"
+            )
+        }
+        guard payload.detectorVersion == detectorVersion else {
+            return .degraded(
+                family: normalized.family,
+                reason: "Browser detector version mismatch; expected \(detectorVersion)"
+            )
+        }
+        guard let expectedProfile = selectorProfiles[normalized.family],
+              payload.selectorProfile == expectedProfile else {
+            return .degraded(
+                family: normalized.family,
+                reason: "Unrecognized \(normalized.family) selector profile"
+            )
+        }
+        guard payload.selectorState == "verified" else {
+            return .degraded(
+                family: normalized.family,
+                reason: "Provider page no longer matches selector profile \(expectedProfile)"
+            )
+        }
+        return .accepted(family: normalized.family, phase: normalized.phase)
+    }
+
     static func fallbackSession(family: String, url: String?) -> String {
         guard let url, !url.isEmpty else { return "web-\(family)" }
         return "web-\(stableIdentifier(url))"
+    }
+
+    private static func family(source: String) -> String? {
+        let sourceValue = source.lowercased()
+        if sourceValue.contains("codex") {
+            return "codex"
+        } else if sourceValue.contains("claude") {
+            return "claude"
+        } else if sourceValue.contains("chatgpt") || sourceValue.contains("openai") {
+            return "chatgpt"
+        }
+        return nil
     }
 
     private static func stableIdentifier(_ value: String) -> String {
@@ -152,7 +216,12 @@ final class WebBridgeServer {
         source.setCancelHandler { close(fd) }
         acceptSource = source
         source.resume()
-        health.markConnected(id: Self.healthID, name: "Browser Web Bridge", protocolVersion: "agent-island-web/v1", endpoint: endpoint)
+        health.markConnected(
+            id: Self.healthID,
+            name: "Browser Web Bridge",
+            protocolVersion: "agent-island-web/v1-v\(BrowserBridgeProtocol.currentVersion)",
+            endpoint: endpoint
+        )
         islandLog("web bridge started endpoint=\(endpoint)")
     }
 
@@ -188,16 +257,62 @@ final class WebBridgeServer {
             writeResponse(401, "unauthorized", to: client)
             return
         }
-        guard let payload = try? JSONDecoder().decode(BrowserBridgePayload.self, from: request.body),
-              BrowserBridgeProtocol.accepts(version: payload.version),
-              let normalized = BrowserBridgeProtocol.normalized(source: payload.source, phase: payload.phase) else {
+        guard let payload = try? JSONDecoder().decode(BrowserBridgePayload.self, from: request.body) else {
+            health.markFailure(
+                id: Self.healthID,
+                name: "Browser Web Bridge",
+                state: .degraded,
+                endpoint: endpoint,
+                error: "Rejected malformed Browser Bridge event"
+            )
             writeResponse(422, "invalid event", to: client)
             return
         }
-        append(payload: payload, family: normalized.family, phase: normalized.phase)
-        health.markEvent(id: Self.healthID, name: "Browser Web Bridge")
-        writeResponse(202, "accepted", to: client)
-        DispatchQueue.main.async { [onEvent] in onEvent() }
+        switch BrowserBridgeProtocol.evaluate(payload) {
+        case let .accepted(family, phase):
+            append(payload: payload, family: family, phase: phase)
+            health.markConnected(
+                id: Self.healthID,
+                name: "Browser Web Bridge",
+                protocolVersion: protocolLabel(payload),
+                endpoint: endpoint,
+                event: true
+            )
+            writeResponse(202, "accepted", to: client)
+            DispatchQueue.main.async { [onEvent] in onEvent() }
+        case let .degraded(_, reason):
+            // A selector/profile mismatch is transport evidence, not session
+            // evidence. Keep the last trustworthy event instead of converting
+            // "unknown" into a false idle or approval state.
+            health.markFailure(
+                id: Self.healthID,
+                name: "Browser Web Bridge",
+                state: .degraded,
+                endpoint: endpoint,
+                error: reason
+            )
+            writeResponse(202, "degraded", to: client)
+        case let .rejected(reason):
+            health.markFailure(
+                id: Self.healthID,
+                name: "Browser Web Bridge",
+                state: .degraded,
+                endpoint: endpoint,
+                error: reason
+            )
+            writeResponse(422, "invalid event", to: client)
+        }
+    }
+
+    private func protocolLabel(_ payload: BrowserBridgePayload) -> String {
+        var values = ["agent-island-web/v\(payload.version)"]
+        if let detectorVersion = payload.detectorVersion {
+            values.append("detector/\(detectorVersion)")
+        }
+        if let selectorProfile = payload.selectorProfile {
+            values.append(selectorProfile)
+        }
+        return values.joined(separator: " · ")
     }
 
     private func append(payload: BrowserBridgePayload, family: String, phase: String) {

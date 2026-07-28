@@ -1,0 +1,15 @@
+{
+  "fixture_version": 1,
+  "fixture_origin": "synthetic redacted selector-profile contract; no page content",
+  "extension_version": "0.3.0",
+  "version": 3,
+  "source": "claude",
+  "session_id": "/chat/redacted-session",
+  "title": "Redacted conversation",
+  "phase": "idle",
+  "detail": "No browser generation control is visible",
+  "url": "https://claude.ai/chat/redacted-session",
+  "detector_version": "0.3.0",
+  "selector_profile": "claude-web-2026-07",
+  "selector_state": "verified"
+}

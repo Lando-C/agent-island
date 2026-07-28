@@ -12,6 +12,7 @@ Agent Island is a native Swift macOS app plus small local scripts.
 | Models | `Sources/AgentIsland/Models/` | jump targets, Codex broker thread model, transport health |
 | State | `Sources/AgentIsland/State/` | hook event reducer, session rollups, display mode, island presentation model |
 | Focus | `Sources/AgentIsland/Services/Focus/` | terminal/tmux/app focusing and PID/TTY/pane inspection |
+| Focus capability contract | `Sources/AgentIsland/Services/Focus/TerminalFocusCapability.swift` | offline exact/context/fallback/unavailable classification for fresh, unambiguous terminal metadata |
 | Conversations | `Sources/AgentIsland/Services/Chat/ConversationStore.swift` | incremental transcript tailing plus Hook/broker event merge |
 | Codex transport | `Sources/AgentIsland/Services/Codex/CodexBrokerClient.swift` | one persistent initialized JSON-RPC connection for requests and threads |
 | Hook socket | `Sources/AgentIsland/Services/Hooks/` | local Unix socket and pending hook response lifecycle |

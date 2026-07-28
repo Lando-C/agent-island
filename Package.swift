@@ -17,6 +17,9 @@ let package = Package(
         .testTarget(
             name: "AgentIslandTests",
             dependencies: ["AgentIsland"],
+            exclude: [
+                "test_claude_hook_fixture_replay.py"
+            ],
             resources: [
                 .process("Fixtures")
             ]

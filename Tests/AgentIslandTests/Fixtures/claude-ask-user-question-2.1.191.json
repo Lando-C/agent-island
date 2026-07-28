@@ -1,0 +1,192 @@
+{
+  "fixtureVersion": 1,
+  "provider": "Claude Code",
+  "providerVersion": "2.1.191",
+  "provenance": {
+    "kind": "documentation-derived-and-local-version-pinned",
+    "source": "Claude Code Hooks Reference",
+    "url": "https://code.claude.com/docs/en/hooks",
+    "verifiedOn": "2026-07-28",
+    "redaction": "Session, transcript path, workspace path, and question content were replaced with deterministic fixture values."
+  },
+  "rawHook": {
+    "session_id": "session-redacted",
+    "transcript_path": "/workspace/redacted/transcript.jsonl",
+    "cwd": "/workspace/redacted",
+    "permission_mode": "default",
+    "hook_event_name": "PreToolUse",
+    "tool_name": "AskUserQuestion",
+    "tool_use_id": "tool-use-redacted",
+    "tool_input": {
+      "questions": [
+        {
+          "question": "Which scope should be updated?",
+          "header": "Scope",
+          "options": [
+            {
+              "label": "Current task",
+              "description": "Only update files for this task."
+            },
+            {
+              "label": "Whole repository",
+              "description": "Allow repository-wide updates."
+            }
+          ],
+          "multiSelect": false
+        },
+        {
+          "question": "Which checks should run?",
+          "header": "Checks",
+          "options": [
+            {
+              "label": "Swift tests",
+              "description": "Run the Swift test suite."
+            },
+            {
+              "label": "Python replay",
+              "description": "Run the Python fixture replay."
+            }
+          ],
+          "multiSelect": true
+        }
+      ]
+    }
+  },
+  "bridgeFrame": {
+    "surface": "cli",
+    "event": "AskUserQuestion",
+    "status": "needs_attention",
+    "title": "Claude needs input",
+    "message": "Which scope should be updated?",
+    "session": "session-redacted",
+    "raw_session": "session-redacted",
+    "primary_session": "session-redacted",
+    "parent_session": "",
+    "request_id": "tool-use-redacted",
+    "tool": "AskUserQuestion",
+    "tool_input_summary": "2 questions",
+    "tool_risk": "",
+    "tool_risk_reason": "",
+    "ts": 1800000001
+  },
+  "normalizedRequest": {
+    "type": "hook_request",
+    "source": "claude",
+    "surface": "cli",
+    "event": "AskUserQuestion",
+    "status": "needs_attention",
+    "title": "Claude needs input",
+    "message": "Which scope should be updated?",
+    "session": "session-redacted",
+    "raw_session": "session-redacted",
+    "primary_session": "session-redacted",
+    "parent_session": "",
+    "request_id": "tool-use-redacted",
+    "tool": "AskUserQuestion",
+    "tool_input_summary": "2 questions",
+    "tool_risk": "",
+    "tool_risk_reason": "",
+    "response_schema": "claude_pre_tool_ask_user_question",
+    "question": "Which scope should be updated?",
+    "options": [
+      "Current task",
+      "Whole repository"
+    ],
+    "questions": [
+      {
+        "id": "Which scope should be updated?",
+        "header": "Scope",
+        "prompt": "Which scope should be updated?",
+        "options": [
+          "Current task",
+          "Whole repository"
+        ],
+        "multiSelect": false,
+        "isSecret": false,
+        "allowsOther": true
+      },
+      {
+        "id": "Which checks should run?",
+        "header": "Checks",
+        "prompt": "Which checks should run?",
+        "options": [
+          "Swift tests",
+          "Python replay"
+        ],
+        "multiSelect": true,
+        "isSecret": false,
+        "allowsOther": true
+      }
+    ],
+    "tool_input_json": "{\"questions\":[{\"question\":\"Which scope should be updated?\",\"header\":\"Scope\",\"options\":[{\"label\":\"Current task\",\"description\":\"Only update files for this task.\"},{\"label\":\"Whole repository\",\"description\":\"Allow repository-wide updates.\"}],\"multiSelect\":false},{\"question\":\"Which checks should run?\",\"header\":\"Checks\",\"options\":[{\"label\":\"Swift tests\",\"description\":\"Run the Swift test suite.\"},{\"label\":\"Python replay\",\"description\":\"Run the Python fixture replay.\"}],\"multiSelect\":true}]}",
+    "ts": 1800000001
+  },
+  "decisions": [
+    {
+      "type": "answer",
+      "answers": {
+        "Which scope should be updated?": [
+          "Current task"
+        ],
+        "Which checks should run?": [
+          "Swift tests",
+          "Python replay"
+        ]
+      },
+      "expectedResponse": {
+        "hookSpecificOutput": {
+          "hookEventName": "PreToolUse",
+          "permissionDecision": "allow",
+          "updatedInput": {
+            "questions": [
+              {
+                "question": "Which scope should be updated?",
+                "header": "Scope",
+                "options": [
+                  {
+                    "label": "Current task",
+                    "description": "Only update files for this task."
+                  },
+                  {
+                    "label": "Whole repository",
+                    "description": "Allow repository-wide updates."
+                  }
+                ],
+                "multiSelect": false
+              },
+              {
+                "question": "Which checks should run?",
+                "header": "Checks",
+                "options": [
+                  {
+                    "label": "Swift tests",
+                    "description": "Run the Swift test suite."
+                  },
+                  {
+                    "label": "Python replay",
+                    "description": "Run the Python fixture replay."
+                  }
+                ],
+                "multiSelect": true
+              }
+            ],
+            "answers": {
+              "Which scope should be updated?": "Current task",
+              "Which checks should run?": "Swift tests, Python replay"
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "deny",
+      "expectedResponse": {
+        "hookSpecificOutput": {
+          "hookEventName": "PreToolUse",
+          "permissionDecision": "deny",
+          "permissionDecisionReason": "User declined from Agent Island"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "fixture_version": 1,
+  "fixture_origin": "synthetic redacted selector-profile contract; no page content",
+  "extension_version": "0.3.0",
+  "version": 3,
+  "source": "chatgpt",
+  "session_id": "/c/redacted-session",
+  "title": "Redacted conversation",
+  "phase": "working",
+  "detail": "Browser generation control is visible",
+  "url": "https://chatgpt.com/c/redacted-session",
+  "detector_version": "0.3.0",
+  "selector_profile": "chatgpt-web-2026-07",
+  "selector_state": "verified"
+}

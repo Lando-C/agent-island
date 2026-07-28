@@ -656,3 +656,59 @@
 - 12 小时 TTL 能清理陈旧状态，但不能证明进程是否仍活着；下一轮仍要用 pid、terminal 和 tmux liveness 做主判据。
 - 测试必须直接执行生产 reducer/store，Python 镜像验证只能作为协议补充，不能替代 Swift 回归。
 - 常驻工具的动效应表达状态而不是占满刷新率；fallback 探针也必须按信号变化频率分层，而不是共用一个高频轮询周期。
+
+## 2026-07-28 Iteration 15 - Codex broker protocol fixtures and fail-closed mapping
+
+目标：
+
+- 为 Codex app-server 当前支持的四类交互请求建立可回放、脱敏的协议 fixture。
+- 让 socket 客户端只负责连接与请求生命周期，把请求/回复映射收敛到可独立验证的纯逻辑层。
+- 核对 Diagnostics 中 transport route、protocol 和 endpoint 的展示。
+
+协议依据：
+
+- 使用本机 Codex CLI 的
+  `codex app-server generate-json-schema --experimental` 生成当前协议 schema。
+- 覆盖 `item/tool/requestUserInput`、
+  `item/commandExecution/requestApproval`、
+  `item/fileChange/requestApproval` 和
+  `item/permissions/requestApproval`。
+- fixture 只包含通用的 redacted thread、turn、item、cwd 和命令示例，不包含真实会话内容、用户路径、凭证或 broker endpoint。
+
+改动：
+
+- 新增 `CodexBrokerProtocol`，集中处理四类 server request 到
+  `HookSocketRequest` 的映射，以及用户决定到 JSON-RPC result 的映射。
+- `CodexBrokerClient` 保留 socket、RPC id、pending lifecycle 和 transport
+  health 职责，不再重复维护协议 payload 逻辑。
+- 新增四个 JSON fixture 和 `CodexBrokerProtocolTests` 回放：
+  - requestUserInput：多问题、选项、Other 和结构化 answers。
+  - command approval：数字 RPC id、命令摘要和 accept。
+  - file approval：reason/grantRoot 和 decline。
+  - permissions approval：原始 permission profile 和 turn scope。
+- 请求映射现在验证 schema 必需的 threadId、turnId、itemId、startedAtMs、
+  cwd、questions 和 permissions；缺失或畸形时不创建可写回请求。
+- permissions allow 在原始 permission profile 无法解析时返回 nil，不再生成
+  空权限回复；command/file approval 收到错误 decision 类型时也不再隐式 decline。
+- Settings Diagnostics 继续分别显示 Route/Protocol 和 Endpoint；endpoint 只在
+  确实位于用户 home 下时缩写为 `~`，避免对中间字符串做错误替换。
+
+验证：
+
+- macOS 15.4 SDK 下 Debug build 通过。
+- `scripts/test-swift` 完成主程序、12 个测试文件和 fixture resource bundle
+  的编译与链接。
+- macOS 15.4 SDK 下 Release build 通过。
+- Python、Browser Bridge JavaScript/manifest、Shell、installer command
+  surface 检查通过。
+- Session reducer 和 expansion controller 回归通过。
+- Codex broker probe 因当前没有 live broker socket 正常跳过。
+- 当前机器只有 Command Line Tools，没有完整 `Xcode.app` / `xctest` runner；
+  XCTest 的实际执行仍需由 GitHub Actions 的 macOS runner 完成。
+
+遗留边界：
+
+- 当前 fixture 来自官方生成 schema，并非真实用户会话抓包。后续仍需采集脱敏
+  live broker 帧，用于发现 provider version 与生成 schema 之间的偏差。
+- `acceptForSession`、execpolicy amendment、network policy amendment 和
+  permission session scope 尚未开放给岛内 UI，不从本轮 fixture 推断支持。

@@ -1,0 +1,109 @@
+{
+  "fixtureVersion": 1,
+  "source": "codex app-server generate-json-schema --experimental",
+  "request": {
+    "id": "input-request-redacted",
+    "method": "item/tool/requestUserInput",
+    "params": {
+      "threadId": "thread-redacted",
+      "turnId": "turn-redacted",
+      "itemId": "item-redacted",
+      "autoResolutionMs": 120000,
+      "questions": [
+        {
+          "id": "scope",
+          "header": "Scope",
+          "question": "Which files should change?",
+          "options": [
+            {
+              "label": "Current task",
+              "description": "Limit changes to the current task."
+            },
+            {
+              "label": "Whole repository",
+              "description": "Allow repository-wide changes."
+            }
+          ],
+          "isOther": true,
+          "isSecret": false
+        },
+        {
+          "id": "note",
+          "header": "Note",
+          "question": "Add an implementation note.",
+          "options": null,
+          "isOther": true,
+          "isSecret": false
+        }
+      ]
+    }
+  },
+  "decision": {
+    "type": "answer",
+    "answers": {
+      "scope": [
+        "Current task"
+      ],
+      "note": [
+        "Keep changes minimal."
+      ]
+    }
+  },
+  "expected": {
+    "mappedRequest": {
+      "type": "codex_app_server",
+      "source": "codex",
+      "surface": "app",
+      "event": "requestUserInput",
+      "status": "needs_attention",
+      "message": "Which files should change?",
+      "session": "thread-redacted",
+      "requestId": "input-request-redacted",
+      "tool": "item/tool/requestUserInput",
+      "toolInputSummary": "Which files should change?",
+      "question": "Which files should change?",
+      "options": [
+        "Current task",
+        "Whole repository"
+      ],
+      "questions": [
+        {
+          "id": "scope",
+          "header": "Scope",
+          "prompt": "Which files should change?",
+          "options": [
+            "Current task",
+            "Whole repository"
+          ],
+          "multiSelect": false,
+          "isSecret": false,
+          "allowsOther": true
+        },
+        {
+          "id": "note",
+          "header": "Note",
+          "prompt": "Add an implementation note.",
+          "options": [],
+          "multiSelect": false,
+          "isSecret": false,
+          "allowsOther": true
+        }
+      ],
+      "responseSchema": "codex_app_server_user_input"
+    },
+    "response": {
+      "answers": {
+        "scope": {
+          "answers": [
+            "Current task"
+          ]
+        },
+        "note": {
+          "answers": [
+            "Keep changes minimal."
+          ]
+        }
+      }
+    }
+  }
+}

@@ -411,9 +411,17 @@ struct AgentSettingsView: View {
                         .foregroundColor(transportColor(transport.state))
                 }
                 if let protocolVersion = transport.protocolVersion, !protocolVersion.isEmpty {
-                    Text(protocolVersion)
+                    Text("\(transport.id == TransportHealthStore.terminalFocusID ? "Route" : "Protocol"): \(protocolVersion)")
                         .font(.system(size: 10, design: .monospaced))
                         .foregroundColor(.secondary)
+                }
+                if let endpoint = transport.endpoint, !endpoint.isEmpty {
+                    Text("Endpoint: \(displayEndpoint(endpoint))")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
                 }
                 if let lastSuccess = transport.lastSuccessAt {
                     Text("Last success \(lastSuccess, style: .relative)")
@@ -451,14 +459,20 @@ struct AgentSettingsView: View {
         }
     }
 
+    private func displayEndpoint(_ endpoint: String) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard endpoint == home || endpoint.hasPrefix(home + "/") else { return endpoint }
+        return "~" + endpoint.dropFirst(home.count)
+    }
+
     private var roadmapTab: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 settingSection("状态与交互主线") {
                     roadmapLine("PendingRequest", "Claude 与 Codex 已支持经过验证的结构化问题/审批写回。")
-                    roadmapLine("聊天详情", "已支持按需读取本地 JSONL；下一步改为增量 Hook 事件存储。")
+                    roadmapLine("聊天详情", "ConversationStore 已合并 Hook、Codex broker 与本地 JSONL 的增量事件；详情默认优先展示对话。")
                     roadmapLine("僵尸检测", "pid/tmux pane 消失自动标记 ended。")
-                    roadmapLine("智能抑制", "对应终端/窗口在前台时已抑制自动展开，保留状态更新。")
+                    roadmapLine("智能抑制", "仅在能确认目标终端上下文时抑制自动展开；无法确认时保留提醒。")
                 }
                 settingSection("体验层") {
                     roadmapLine("离岛模式", "外接屏和多空间使用时让状态跟随当前工作屏。")

@@ -1,6 +1,6 @@
 # Roadmap
 
-Status updated: 2026-07-14. This document describes the shipped product rather
+Status updated: 2026-07-28. This document describes the shipped product rather
 than the original prototype plan. `README.md` is the public capability summary;
 Diagnostics in the running app remains the source of truth for one Mac.
 
@@ -19,11 +19,16 @@ Implemented:
   non-authoritative DOM signal and never scans conversation text for approvals.
 - Regression coverage for session lifecycle, liveness, Hook approval, and Hook
   question-answer socket round trips.
+- Redacted, schema-derived fixture replay for Codex `requestUserInput`, command
+  approval, file approval, and permissions approval. Unknown methods, malformed
+  required fields, invalid permission payloads, and mismatched decision types
+  fail closed.
 
 Still required:
 
-- Capture redacted live Codex broker fixtures for every supported approval and
-  input schema. The client must not broaden write-back from inferred payloads.
+- Capture redacted live Codex broker frames across supported provider versions
+  and compare them with the schema-derived fixtures. The client must not broaden
+  write-back from inferred or newly observed payloads without fixture review.
 - Add provider-version fixture replay for Claude hooks and Browser Bridge DOM
   selectors, so a UI/provider update becomes a visible degraded capability.
 - Add a safe app/web conversation adapter where a provider exposes a local event

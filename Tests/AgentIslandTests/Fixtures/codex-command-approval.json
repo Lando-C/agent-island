@@ -1,0 +1,42 @@
+{
+  "fixtureVersion": 1,
+  "source": "codex app-server generate-json-schema --experimental",
+  "request": {
+    "id": 101,
+    "method": "item/commandExecution/requestApproval",
+    "params": {
+      "threadId": "thread-redacted",
+      "turnId": "turn-redacted",
+      "itemId": "command-item-redacted",
+      "startedAtMs": 1700000000000,
+      "command": "swift test --filter CodexBrokerProtocolTests",
+      "cwd": "/workspace/redacted",
+      "reason": "Run protocol regression tests.",
+      "availableDecisions": [
+        "accept",
+        "decline"
+      ]
+    }
+  },
+  "decision": {
+    "type": "allow"
+  },
+  "expected": {
+    "mappedRequest": {
+      "type": "codex_app_server",
+      "source": "codex",
+      "surface": "app",
+      "event": "PermissionRequest",
+      "status": "needs_attention",
+      "message": "Run protocol regression tests.",
+      "session": "thread-redacted",
+      "requestId": "101",
+      "tool": "item/commandExecution/requestApproval",
+      "toolInputSummary": "swift test --filter CodexBrokerProtocolTests",
+      "responseSchema": "codex_app_server_command_approval"
+    },
+    "response": {
+      "decision": "accept"
+    }
+  }
+}

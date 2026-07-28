@@ -16,7 +16,10 @@ let package = Package(
         .executableTarget(name: "AgentIsland"),
         .testTarget(
             name: "AgentIslandTests",
-            dependencies: ["AgentIsland"]
+            dependencies: ["AgentIsland"],
+            resources: [
+                .process("Fixtures")
+            ]
         )
     ]
 )

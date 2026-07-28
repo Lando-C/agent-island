@@ -1,0 +1,37 @@
+{
+  "fixtureVersion": 1,
+  "source": "codex app-server generate-json-schema --experimental",
+  "request": {
+    "id": "file-request-redacted",
+    "method": "item/fileChange/requestApproval",
+    "params": {
+      "threadId": "thread-redacted",
+      "turnId": "turn-redacted",
+      "itemId": "file-item-redacted",
+      "startedAtMs": 1700000000100,
+      "reason": "Apply the fixture updates.",
+      "grantRoot": "/workspace/redacted"
+    }
+  },
+  "decision": {
+    "type": "deny"
+  },
+  "expected": {
+    "mappedRequest": {
+      "type": "codex_app_server",
+      "source": "codex",
+      "surface": "app",
+      "event": "PermissionRequest",
+      "status": "needs_attention",
+      "message": "Apply the fixture updates.",
+      "session": "thread-redacted",
+      "requestId": "file-request-redacted",
+      "tool": "item/fileChange/requestApproval",
+      "toolInputSummary": "Apply the fixture updates.",
+      "responseSchema": "codex_app_server_file_approval"
+    },
+    "response": {
+      "decision": "decline"
+    }
+  }
+}

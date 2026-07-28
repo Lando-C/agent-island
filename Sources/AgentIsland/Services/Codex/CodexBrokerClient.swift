@@ -291,67 +291,17 @@ final class CodexBrokerClient {
     }
 
     private func handleServerRequest(method: String, rawID: Any, params: [String: Any]) {
-        let schema: String
-        let event: String
-        switch method {
-        case "item/tool/requestUserInput":
-            schema = "codex_app_server_user_input"
-            event = "requestUserInput"
-        case "item/commandExecution/requestApproval":
-            schema = "codex_app_server_command_approval"
-            event = "PermissionRequest"
-        case "item/fileChange/requestApproval":
-            schema = "codex_app_server_file_approval"
-            event = "PermissionRequest"
-        case "item/permissions/requestApproval":
-            schema = "codex_app_server_permissions_approval"
-            event = "PermissionRequest"
-        default:
-            return
-        }
-
-        let id = Self.stringify(rawID)
-        let questions = Self.parseQuestions(params["questions"] as? [[String: Any]] ?? [])
-        let command = (params["command"] as? [String])?.joined(separator: " ")
-        let question = questions.first?.prompt
-        let detail = question
-            ?? (params["reason"] as? String)
-            ?? command
-            ?? (params["grantRoot"] as? String)
-            ?? "Codex 正在等待你的决定"
-        let permissionsJSON = (try? JSONSerialization.data(withJSONObject: params["permissions"] ?? [:]))
-            .flatMap { String(data: $0, encoding: .utf8) }
-        let request = HookSocketRequest(
-            type: "codex_app_server",
-            source: "codex",
-            surface: "app",
-            event: event,
-            status: "needs_attention",
-            title: nil,
-            message: detail,
-            session: params["threadId"] as? String,
-            rawSession: nil,
-            primarySession: nil,
-            parentSession: nil,
-            requestID: id,
-            tool: method,
-            toolInputSummary: command ?? detail,
-            toolRisk: nil,
-            toolRiskReason: nil,
-            question: question,
-            options: questions.first?.options,
-            questions: questions,
-            responseSchema: schema,
-            toolInputJSON: permissionsJSON,
-            requestedSchemaJSON: nil,
-            ts: Date().timeIntervalSince1970
-        )
+        guard let request = CodexBrokerProtocol.request(
+            fromServerMethod: method,
+            rawID: rawID,
+            params: params
+        ) else { return }
         rpcIDsByPendingID[request.pendingID] = rawID
         conversations.ingestHookRequest(request)
         DispatchQueue.main.async { [weak self] in
             _ = self?.store.upsert(socketRequest: request)
         }
-        islandLog("codex broker request method=\(method) thread=\(request.logicalSessionID ?? "nil") id=\(id)")
+        islandLog("codex broker request method=\(method) thread=\(request.logicalSessionID ?? "nil") id=\(request.requestID ?? "unknown")")
     }
 
     private func request(
@@ -382,21 +332,11 @@ final class CodexBrokerClient {
             }
             return
         }
-        let result: [String: Any]
-        switch request.responseSchema {
-        case "codex_app_server_user_input":
-            guard case .answer(let answers) = decision else { return }
-            result = Self.userInputResponsePayload(answers)
-        case "codex_app_server_command_approval", "codex_app_server_file_approval":
-            result = ["decision": Self.isAllowed(decision) ? "accept" : "decline"]
-        case "codex_app_server_permissions_approval":
-            let permissions = Self.jsonObject(request.toolInputJSON) ?? [:]
-            result = Self.isAllowed(decision)
-                ? ["permissions": permissions, "scope": "turn"]
-                : ["permissions": [:], "scope": "turn"]
-        default:
-            return
-        }
+        guard let result = CodexBrokerProtocol.responsePayload(
+            responseSchema: request.responseSchema,
+            toolInputJSON: request.toolInputJSON,
+            decision: decision
+        ) else { return }
         if send(["id": rawID, "result": result]) {
             rpcIDsByPendingID.removeValue(forKey: request.id)
             islandLog("codex broker responded request=\(request.id)")
@@ -607,22 +547,6 @@ final class CodexBrokerClient {
             || text.contains("stop-gate review")
     }
 
-    private static func parseQuestions(_ raw: [[String: Any]]) -> [PendingQuestion] {
-        raw.compactMap { item in
-            guard let prompt = item["question"] as? String, !prompt.isEmpty else { return nil }
-            let options = (item["options"] as? [[String: Any]] ?? []).compactMap { $0["label"] as? String }
-            return PendingQuestion(
-                id: (item["id"] as? String) ?? prompt,
-                header: item["header"] as? String,
-                prompt: prompt,
-                options: options,
-                multiSelect: item["multiSelect"] as? Bool ?? false,
-                isSecret: item["isSecret"] as? Bool ?? false,
-                allowsOther: item["isOther"] as? Bool
-            )
-        }
-    }
-
     private static func discoverBrokerSockets() -> [String] {
         var candidates: [(Date, String)] = []
         if let override = ProcessInfo.processInfo.environment["AGENT_ISLAND_CODEX_BROKER_SOCKET"], !override.isEmpty {
@@ -675,9 +599,7 @@ final class CodexBrokerClient {
     }
 
     static func userInputResponsePayload(_ answers: [String: [String]]) -> [String: Any] {
-        ["answers": answers.reduce(into: [String: Any]()) { output, entry in
-            output[entry.key] = ["answers": entry.value]
-        }]
+        CodexBrokerProtocol.userInputResponsePayload(answers)
     }
 
     private static func protocolVersion(from value: Any) -> String? {
@@ -701,16 +623,6 @@ final class CodexBrokerClient {
         if let value = value as? String { return value }
         if let value = value as? NSNumber { return value.stringValue }
         return String(describing: value)
-    }
-
-    private static func isAllowed(_ decision: PendingRequestDecision) -> Bool {
-        if case .allow = decision { return true }
-        return false
-    }
-
-    private static func jsonObject(_ text: String?) -> [String: Any]? {
-        guard let text, let data = text.data(using: .utf8) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
     }
 
     private static func rpcError(_ payload: [String: Any]) -> Error {

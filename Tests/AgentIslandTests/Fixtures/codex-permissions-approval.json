@@ -1,0 +1,67 @@
+{
+  "fixtureVersion": 1,
+  "source": "codex app-server generate-json-schema --experimental",
+  "request": {
+    "id": "permissions-request-redacted",
+    "method": "item/permissions/requestApproval",
+    "params": {
+      "threadId": "thread-redacted",
+      "turnId": "turn-redacted",
+      "itemId": "permissions-item-redacted",
+      "startedAtMs": 1700000000200,
+      "cwd": "/workspace/redacted",
+      "reason": "Allow fixture updates.",
+      "permissions": {
+        "fileSystem": {
+          "write": [
+            "/workspace/redacted"
+          ]
+        },
+        "network": {
+          "enabled": false
+        }
+      }
+    }
+  },
+  "decision": {
+    "type": "allow"
+  },
+  "expected": {
+    "mappedRequest": {
+      "type": "codex_app_server",
+      "source": "codex",
+      "surface": "app",
+      "event": "PermissionRequest",
+      "status": "needs_attention",
+      "message": "Allow fixture updates.",
+      "session": "thread-redacted",
+      "requestId": "permissions-request-redacted",
+      "tool": "item/permissions/requestApproval",
+      "toolInputSummary": "Allow fixture updates.",
+      "toolInput": {
+        "fileSystem": {
+          "write": [
+            "/workspace/redacted"
+          ]
+        },
+        "network": {
+          "enabled": false
+        }
+      },
+      "responseSchema": "codex_app_server_permissions_approval"
+    },
+    "response": {
+      "permissions": {
+        "fileSystem": {
+          "write": [
+            "/workspace/redacted"
+          ]
+        },
+        "network": {
+          "enabled": false
+        }
+      },
+      "scope": "turn"
+    }
+  }
+}

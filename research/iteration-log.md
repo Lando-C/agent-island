@@ -963,3 +963,55 @@ Compact companion：
 - 声音提醒是本地系统声音，不等同于 macOS Notification Center 推送。
 - `main.swift` 仍拥有 AgentMonitor、AgentLauncher、主 Island SwiftUI 和
   AppDelegate，后续继续按 provider probes 与 presentation 边界拆分。
+
+## 2026-07-28 Iteration 20 - Companion themes, diagnostics export, and focus boundary
+
+目标：
+
+- 将 compact companion 从单一内置视觉推进到可配置但仍以状态为先的主题。
+- 为已验证的脱敏诊断历史增加筛选和安全导出。
+- 把跳转路由从 app shell 迁到 Focus 服务边界。
+
+伴侣主题：
+
+- 新增 Foundation-only `CompanionThemePreferences`，支持 system、friendly、
+  technical 三套内置主题、全局默认和每个 AgentFamily 独立覆盖。
+- UserDefaults 支持 canonical round-trip、损坏/未来值安全回退，以及早期
+  prototype 的 classic/mascot/developer 等单值别名兼容。
+- Settings 外观页可选择默认主题或让 Codex、Claude、Claude Science、
+  ChatGPT 分别继承/覆盖；变更会即时刷新 detached companion。
+- 主题只使用 SF Symbols 和原生形状，不引入来源或许可不明的外部素材；状态
+  tone、session hierarchy、Reduce Motion 和可访问性行为保持一致。
+
+诊断历史：
+
+- 新增纯 `DiagnosticsHistoryPolicy`，支持 transport、state 和多词 AND 文本
+  筛选并保持 newest-first 顺序。
+- Settings 可复制筛选后的稳定文本，或通过 Save Panel 导出带 schema/privacy
+  标记的 JSON；导出文件权限设为 `0600`。
+- 筛选索引和导出记录都会再次经过现有 identifier/name/protocol/endpoint/
+  failure 脱敏边界，防止手工构造或旧文件中的 raw 值外泄。
+
+Focus 边界：
+
+- 将 371 行 `AgentLauncher` 原样迁到
+  `Services/Focus/AgentLauncher.swift`，保留 URL、process、terminal/tmux、
+  Claude App、browser 和 app activation fallback 行为。
+- `main.swift` 从 4588 行降到 4217 行；类型定义保持唯一。
+
+验证：
+
+- macOS 15.4 SDK 下 Debug App、XCTest 测试 target 和 Release App 编译通过。
+- 新增主题解析/迁移、主题视觉差异、诊断组合筛选和二次脱敏导出测试。
+- Python、Browser Bridge、Shell、installer、session reducer、expansion
+  controller 和 Codex broker probe 验证通过。
+- 完整 XCTest 执行继续交给 GitHub Actions macOS runner。
+
+遗留边界：
+
+- 原创 mascot 图片资产仍需要独立设计、许可和可访问性审查；当前内置主题
+  已满足无外部素材的用户可选视觉方向。
+- 像素级 notch/non-notch/external display 截图仍需要有 WindowServer 的
+  UI 测试环境。
+- 真实终端矩阵、clean-machine 安装验收、Developer ID 和 notarization
+  仍属于外部环境/凭证工作。

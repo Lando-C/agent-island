@@ -12,13 +12,13 @@ Agent Island is a native Swift macOS app plus small local scripts.
 | Models | `Sources/AgentIsland/Models/AgentModels.swift`, `AgentText.swift`, `Sources/AgentIsland/Models/` | Foundation-only agent family/surface/phase, snapshots, provider events, rollups and text normalization, plus jump targets, Codex broker thread model, transport health |
 | State | `Sources/AgentIsland/State/` | hook event reducer, session rollups, display mode, island presentation model |
 | Event normalization | `Sources/AgentIsland/Services/Events/AgentEventNormalizer.swift` | pure provider vocabulary mapping for family, surface, phase, and hook lifecycle names |
-| Focus | `Sources/AgentIsland/Services/Focus/` | terminal/tmux/app focusing and PID/TTY/pane inspection |
+| Focus | `Sources/AgentIsland/Services/Focus/AgentLauncher.swift`, `Sources/AgentIsland/Services/Focus/` | jump routing, terminal/tmux/app focusing and PID/TTY/pane inspection |
 | Focus capability contract | `Sources/AgentIsland/Services/Focus/TerminalFocusCapability.swift` | offline exact/context/fallback/unavailable classification for fresh, unambiguous terminal metadata |
 | Conversations | `Sources/AgentIsland/Services/Chat/ConversationStore.swift` | incremental transcript tailing plus Hook/broker event merge |
 | Codex transport | `Sources/AgentIsland/Services/Codex/CodexBrokerClient.swift`, `CodexBrokerEndpoint.swift` | one persistent initialized JSON-RPC connection for requests and threads, with one tested discovery/socket boundary |
 | Hook socket | `Sources/AgentIsland/Services/Hooks/` | local Unix socket and pending hook response lifecycle |
 | Hooks | `scripts/agent-island-bridge.py`, `scripts/install-hooks` | Claude/Codex hook capture and install |
-| Diagnostics | `Sources/AgentIsland/Models/DiagnosticsHistory.swift`, `scripts/agent-island-diagnostics`, `scripts/agent-island-support-bundle` | bounded redacted transport history, health report, and privacy-safe support artifact |
+| Diagnostics | `Sources/AgentIsland/Models/DiagnosticsHistory.swift`, `DiagnosticsHistoryPolicy.swift`, `scripts/agent-island-diagnostics`, `scripts/agent-island-support-bundle` | bounded redacted transport history, composable filtering, second-pass-redacted export, health report, and privacy-safe support artifact |
 
 The packaged `scripts/codex-broker-probe` intentionally keeps a small,
 protocol-independent Python implementation of broker discovery. Diagnostics and

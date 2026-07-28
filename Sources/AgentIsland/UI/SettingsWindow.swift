@@ -5,11 +5,13 @@ import AppKit
 import Foundation
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum AgentIslandSettingsKeys {
     static let idleWidth = "agentIsland.appearance.idleWidth"
     static let workingWidth = "agentIsland.appearance.workingWidth"
     static let settingsChanged = Notification.Name("AgentIslandSettingsChanged")
+    static let companionThemeChanged = Notification.Name("AgentIslandCompanionThemeChanged")
 }
 
 final class AgentSettingsWindowController: NSWindowController {
@@ -89,6 +91,10 @@ struct AgentSettingsView: View {
     @State private var selectedTab: SettingsTab = .onboarding
     @State private var diagnosticsText = "点击 Run Diagnostics 生成报告。"
     @State private var diagnosticsRunning = false
+    @State private var diagnosticsQuery = ""
+    @State private var diagnosticsTransportID = "all"
+    @State private var diagnosticsState = "all"
+    @State private var diagnosticsExportMessage = ""
     @State private var autoApprovalEnabled = AutoApprovalStore.load().enabled
     @State private var allowReadOnly = AutoApprovalStore.load().allowReadOnly
     @State private var idleWidth = AgentSettingsStore.idleWidth
@@ -96,6 +102,7 @@ struct AgentSettingsView: View {
     @State private var launchStatus = LaunchAtLoginController.statusText
     @State private var smartSuppression = SmartSuppression.isEnabled
     @State private var floatingMode = IslandDisplayModeStore.mode == .floating
+    @State private var companionThemePreferences = CompanionThemeSettings.preferences
     @State private var soundPreferences = AgentIslandSoundSettings.preferences
     @State private var settingsMessage = ""
     @State private var pendingCleanupScope: AgentIslandOwnedDataScope?
@@ -276,6 +283,7 @@ struct AgentSettingsView: View {
     }
 
     private var appearanceTab: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 18) {
             settingSection("刘海宽度") {
                 widthSlider("待机宽度", value: $idleWidth, range: 320...760)
@@ -292,10 +300,50 @@ struct AgentSettingsView: View {
                         IslandDisplayModeStore.mode = value ? .floating : .notch
                         NotificationCenter.default.post(name: AgentIslandSettingsKeys.settingsChanged, object: nil)
                     }
-                roadmapLine("紧凑伴侣", "已按引擎和状态区分内置视觉；用户可选主题资产仍在路线中。")
+                Picker("默认伴侣主题", selection: $companionThemePreferences.defaultTheme) {
+                    ForEach(CompanionTheme.allCases) { theme in
+                        Text(theme.displayName).tag(theme)
+                    }
+                }
+                ForEach(AgentFamily.allCases, id: \.self) { family in
+                    Picker(
+                        "\(family.displayName) 主题",
+                        selection: familyThemeSelection(family)
+                    ) {
+                        Text("跟随默认").tag("inherit")
+                        ForEach(CompanionTheme.allCases) { theme in
+                            Text(theme.displayName).tag(theme.rawValue)
+                        }
+                    }
+                }
+                Text("主题使用系统符号和原生形状，不下载第三方素材；每个引擎可单独覆盖默认主题。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
                 roadmapLine("声音提示", "开始、完成、需处理/异常可分别启停和选声；总开关默认关闭。")
             }
+            .onChange(of: companionThemePreferences) { value in
+                CompanionThemeSettings.preferences = value
+                NotificationCenter.default.post(
+                    name: AgentIslandSettingsKeys.companionThemeChanged,
+                    object: nil
+                )
+            }
         }
+        }
+    }
+
+    private func familyThemeSelection(_ family: AgentFamily) -> Binding<String> {
+        Binding(
+            get: {
+                companionThemePreferences.familyOverrides[family]?.rawValue ?? "inherit"
+            },
+            set: { rawValue in
+                companionThemePreferences.setOverride(
+                    rawValue == "inherit" ? nil : CompanionTheme.parsePersisted(rawValue),
+                    for: family
+                )
+            }
+        )
     }
 
     private func widthSlider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
@@ -605,10 +653,56 @@ struct AgentSettingsView: View {
                         .font(.system(size: 12))
                         .foregroundColor(.secondary)
                 } else {
-                    ForEach(diagnosticsHistory.entries.prefix(12)) { entry in
-                        diagnosticsHistoryRow(entry)
+                    TextField("筛选传输、协议、端点或失败摘要", text: $diagnosticsQuery)
+                    HStack {
+                        Picker("传输", selection: $diagnosticsTransportID) {
+                            Text("全部传输").tag("all")
+                            ForEach(diagnosticsTransportIDs, id: \.self) { transportID in
+                                Text(diagnosticsTransportName(for: transportID)).tag(transportID)
+                            }
+                        }
+                        Picker("状态", selection: $diagnosticsState) {
+                            Text("全部状态").tag("all")
+                            ForEach(TransportConnectionState.allCases, id: \.self) { state in
+                                Text(state.label).tag(state.rawValue)
+                            }
+                        }
+                    }
+                    HStack {
+                        Text("显示 \(min(filteredDiagnosticsEntries.count, 12)) / \(filteredDiagnosticsEntries.count) 条")
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button("复制筛选结果") { copyFilteredDiagnosticsHistory() }
+                            .disabled(filteredDiagnosticsEntries.isEmpty)
+                        Button("导出脱敏 JSON…") { exportFilteredDiagnosticsHistory() }
+                            .disabled(filteredDiagnosticsEntries.isEmpty)
+                    }
+                    if filteredDiagnosticsEntries.isEmpty {
+                        Text("当前筛选条件没有匹配记录。")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    } else {
+                        ForEach(filteredDiagnosticsEntries.prefix(12)) { entry in
+                            diagnosticsHistoryRow(entry)
+                        }
+                    }
+                    if !diagnosticsExportMessage.isEmpty {
+                        Text(diagnosticsExportMessage)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
                     }
                 }
+            }
+            .onChange(of: diagnosticsQuery) { _ in diagnosticsExportMessage = "" }
+            .onChange(of: diagnosticsTransportID) { _ in diagnosticsExportMessage = "" }
+            .onChange(of: diagnosticsState) { _ in diagnosticsExportMessage = "" }
+            .onChange(of: diagnosticsHistory.entries) { _ in
+                if diagnosticsTransportID != "all",
+                   !diagnosticsTransportIDs.contains(diagnosticsTransportID) {
+                    diagnosticsTransportID = "all"
+                }
+                diagnosticsExportMessage = ""
             }
 
             ScrollView {
@@ -717,6 +811,41 @@ struct AgentSettingsView: View {
         }
     }
 
+    private var diagnosticsTransportIDs: [String] {
+        let names = Dictionary(
+            sanitizedDiagnosticsEntries.map { ($0.transportID, $0.transportName) },
+            uniquingKeysWith: { _, latest in latest }
+        )
+        return names.keys.sorted {
+            (names[$0] ?? $0).localizedCaseInsensitiveCompare(names[$1] ?? $1) == .orderedAscending
+        }
+    }
+
+    private func diagnosticsTransportName(for transportID: String) -> String {
+        sanitizedDiagnosticsEntries.first { $0.transportID == transportID }?.transportName
+            ?? transportID
+    }
+
+    private var sanitizedDiagnosticsEntries: [DiagnosticsHistoryEntry] {
+        DiagnosticsHistoryPolicy.filter(
+            diagnosticsHistory.entries,
+            using: DiagnosticsHistoryFilter()
+        )
+    }
+
+    private var filteredDiagnosticsEntries: [DiagnosticsHistoryEntry] {
+        DiagnosticsHistoryPolicy.filter(
+            diagnosticsHistory.entries,
+            using: DiagnosticsHistoryFilter(
+                transportID: diagnosticsTransportID == "all" ? nil : diagnosticsTransportID,
+                state: diagnosticsState == "all"
+                    ? nil
+                    : TransportConnectionState(rawValue: diagnosticsState),
+                query: diagnosticsQuery
+            )
+        )
+    }
+
     private func transportColor(_ state: TransportConnectionState) -> Color {
         switch state {
         case .connected: return .green
@@ -796,6 +925,45 @@ struct AgentSettingsView: View {
                 diagnosticsRunning = false
             }
         }
+    }
+
+    private func copyFilteredDiagnosticsHistory() {
+        diagnosticsExportMessage = ""
+        do {
+            let text = try DiagnosticsHistoryPolicy.export(
+                filteredDiagnosticsEntries,
+                format: .text
+            )
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            diagnosticsExportMessage = "已复制 \(filteredDiagnosticsEntries.count) 条脱敏记录。"
+        } catch {
+            diagnosticsExportMessage = "复制失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func exportFilteredDiagnosticsHistory() {
+        diagnosticsExportMessage = ""
+        guard let url = chooseDiagnosticsExportURL() else { return }
+        do {
+            try DiagnosticsHistoryPolicy.export(
+                filteredDiagnosticsEntries,
+                format: .json,
+                to: url
+            )
+            diagnosticsExportMessage = "已导出 \(filteredDiagnosticsEntries.count) 条脱敏记录。"
+        } catch {
+            diagnosticsExportMessage = "导出失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func chooseDiagnosticsExportURL() -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.json]
+        panel.nameFieldStringValue = "agent-island-diagnostics-history.json"
+        panel.title = "导出脱敏诊断历史"
+        panel.message = "文件仅包含当前筛选后的脱敏传输元数据。"
+        return panel.runModal() == .OK ? panel.url : nil
     }
 
     private func saveAutoApproval() {

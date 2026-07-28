@@ -25,6 +25,7 @@ enum CompanionMotion: Equatable {
 }
 
 struct CompanionVisualPolicy: Equatable {
+    var theme: CompanionTheme
     var familyGlyph: String
     var phaseGlyph: String
     var familyPalette: CompanionFamilyPalette
@@ -37,18 +38,19 @@ struct CompanionVisualPolicy: Equatable {
     static func resolve(
         family: AgentFamily,
         surface: AgentSurface,
-        phase: AgentPhase
+        phase: AgentPhase,
+        theme: CompanionTheme = .system
     ) -> CompanionVisualPolicy {
         let identity: (String, CompanionFamilyPalette)
         switch family {
         case .codex:
-            identity = ("chevron.left.forwardslash.chevron.right", .codex)
+            identity = (familyGlyph(.codex, theme: theme), .codex)
         case .claude:
-            identity = ("sparkles", .claude)
+            identity = (familyGlyph(.claude, theme: theme), .claude)
         case .claudeScience:
-            identity = ("atom", .science)
+            identity = (familyGlyph(.claudeScience, theme: theme), .science)
         case .chatgpt:
-            identity = ("bubble.left.and.bubble.right.fill", .chatgpt)
+            identity = (familyGlyph(.chatgpt, theme: theme), .chatgpt)
         }
 
         let state: (String, CompanionStateTone, CompanionMotion, String)
@@ -76,6 +78,7 @@ struct CompanionVisualPolicy: Equatable {
         }
 
         return CompanionVisualPolicy(
+            theme: theme,
             familyGlyph: identity.0,
             phaseGlyph: state.0,
             familyPalette: identity.1,
@@ -85,5 +88,22 @@ struct CompanionVisualPolicy: Equatable {
             stateLabel: phase.label,
             stateSummary: state.3
         )
+    }
+
+    private static func familyGlyph(_ family: AgentFamily, theme: CompanionTheme) -> String {
+        switch (theme, family) {
+        case (.system, .codex): return "chevron.left.forwardslash.chevron.right"
+        case (.system, .claude): return "sparkles"
+        case (.system, .claudeScience): return "atom"
+        case (.system, .chatgpt): return "bubble.left.and.bubble.right.fill"
+        case (.friendly, .codex): return "ladybug.fill"
+        case (.friendly, .claude): return "pawprint.fill"
+        case (.friendly, .claudeScience): return "bird.fill"
+        case (.friendly, .chatgpt): return "hare.fill"
+        case (.technical, .codex): return "terminal.fill"
+        case (.technical, .claude): return "cpu"
+        case (.technical, .claudeScience): return "server.rack"
+        case (.technical, .chatgpt): return "network"
+        }
     }
 }

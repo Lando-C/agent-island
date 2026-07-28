@@ -57,6 +57,8 @@ The goal is not to show that an app is online. The goal is to answer:
 - Explicit 7/30/90-day retention for Agent Island event projections and
   diagnostics history, plus an in-memory-only conversation projection policy.
   Cleanup controls never delete provider-owned Claude/Codex transcripts.
+- Diagnostics history can be filtered by transport, state, or text, copied as
+  redacted text, and exported as a second-pass-redacted JSON document.
 - Hook installer for:
   - Claude Code: `~/.claude/settings.json`
   - Codex CLI: `~/.codex/hooks.json` and `~/.codex/config.toml`
@@ -89,7 +91,8 @@ The goal is not to show that an app is online. The goal is to answer:
   throttling.
 - The detached companion uses its own family/state/session hierarchy, distinct
   family glyphs, reducer-driven semantic tones, and a visible return-to-notch
-  action rather than resizing the notch panel.
+  action rather than resizing the notch panel. System, friendly mascot, and
+  technical themes can be selected globally or overridden per engine.
 - In-island allow/deny for Claude Code `PermissionRequest` hooks.
 - `request_user_input` / elicitation events are captured as structured pending
   requests. Verified Claude hook and Codex app-server schemas are written back
@@ -350,8 +353,8 @@ Next priority is not a UI rewrite. The next product work should be:
    event API; avoid screen-scraping as a source of truth.
 4. Publish the rendered Cask into the Homebrew tap after the first notarized
    release is signed.
-5. Extend the compact companion into per-engine configurable mascots without
-   weakening the status-first information design.
+5. Design optional original mascot artwork and licensing/accessibility variants
+   without weakening the status-first information design.
 
 ## Browser Web Bridge
 

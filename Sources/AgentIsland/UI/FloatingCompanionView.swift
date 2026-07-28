@@ -16,6 +16,7 @@ struct FloatingCompanionView: View {
 
     @State private var showingBubble = false
     @State private var pulse = false
+    @State private var themePreferences = CompanionThemeSettings.preferences
     private let ticker = Timer.publish(every: 0.84, on: .main, in: .common).autoconnect()
 
     static func panelSize(expanded: Bool) -> NSSize {
@@ -26,12 +27,19 @@ struct FloatingCompanionView: View {
 
     private var visual: CompanionVisualPolicy {
         guard let snapshot else {
-            return .resolve(family: .codex, surface: .runtime, phase: .idle)
+            let family = AgentFamily.codex
+            return .resolve(
+                family: family,
+                surface: .runtime,
+                phase: .idle,
+                theme: themePreferences.theme(for: family)
+            )
         }
         return .resolve(
             family: snapshot.family,
             surface: snapshot.surface,
-            phase: snapshot.phase
+            phase: snapshot.phase,
+            theme: themePreferences.theme(for: snapshot.family)
         )
     }
 
@@ -59,25 +67,56 @@ struct FloatingCompanionView: View {
             guard showingBubble else { return }
             setBubbleVisible(false)
         }
+        .onReceive(NotificationCenter.default.publisher(for: AgentIslandSettingsKeys.companionThemeChanged)) { _ in
+            themePreferences = CompanionThemeSettings.preferences
+        }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(visual.identityLabel)，\(visual.stateLabel)")
     }
 
     private var compactCompanion: some View {
+        HStack(spacing: 9) {
+            companionSummary
+                .contentShape(Rectangle())
+                .onTapGesture { setBubbleVisible(!showingBubble) }
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("\(visual.identityLabel)，\(visual.stateLabel)")
+                .accessibilityHint(showingBubble ? "收起会话卡片" : "展开主要会话")
+                .accessibilityAction { setBubbleVisible(!showingBubble) }
+
+            Button(action: onReturnToNotch) {
+                Image(systemName: "arrow.up.to.line.compact")
+                    .font(.system(size: 9, weight: .semibold))
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white.opacity(0.62))
+            .help("回到刘海（⌥⌘N）")
+            .accessibilityLabel("回到刘海")
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 68)
+        .background(companionBackground)
+        .contentShape(RoundedRectangle(cornerRadius: companionCornerRadius, style: .continuous))
+        .help(showingBubble ? "收起会话卡片" : "查看主要会话")
+    }
+
+    private var companionSummary: some View {
         HStack(spacing: 9) {
             identityGlyph
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(visual.identityLabel)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(.system(size: 10, weight: .semibold, design: companionFontDesign))
                     .foregroundStyle(.white.opacity(0.62))
                     .lineLimit(1)
 
                 HStack(spacing: 5) {
                     Image(systemName: visual.phaseGlyph)
                         .font(.system(size: 9, weight: .bold))
+                        .accessibilityHidden(true)
                     Text(visual.stateLabel)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .font(.system(size: 12, weight: .bold, design: companionFontDesign))
                         .lineLimit(1)
                 }
                 .foregroundStyle(stateColor)
@@ -93,35 +132,17 @@ struct FloatingCompanionView: View {
                     .background(Color.white.opacity(0.1), in: Capsule())
                     .accessibilityLabel("\(viewModel.activeSnapshots.count) 个活跃会话")
             }
-
-            Button(action: onReturnToNotch) {
-                Image(systemName: "arrow.up.to.line.compact")
-                    .font(.system(size: 9, weight: .semibold))
-                    .frame(width: 20, height: 20)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.white.opacity(0.62))
-            .help("回到刘海（⌥⌘N）")
-            .accessibilityLabel("回到刘海")
         }
-        .padding(.horizontal, 10)
-        .frame(height: 68)
-        .background(companionBackground)
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .onTapGesture { setBubbleVisible(!showingBubble) }
-        .help(showingBubble ? "收起会话卡片" : "查看主要会话")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityHint(showingBubble ? "收起会话卡片" : "展开主要会话")
-        .accessibilityAction { setBubbleVisible(!showingBubble) }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var identityGlyph: some View {
         ZStack(alignment: .bottomTrailing) {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: identityCornerRadius, style: .continuous)
                 .fill(familyColor.opacity(0.2))
                 .frame(width: 42, height: 42)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: identityCornerRadius, style: .continuous)
                         .stroke(familyColor.opacity(0.48), lineWidth: 1)
                 }
 
@@ -130,12 +151,14 @@ struct FloatingCompanionView: View {
                 .foregroundStyle(familyColor)
                 .frame(width: 42, height: 42)
                 .scaleEffect(pulse ? 1.08 : 1)
+                .accessibilityHidden(true)
 
             Circle()
                 .fill(stateColor)
                 .frame(width: 10, height: 10)
                 .overlay(Circle().stroke(Color.black.opacity(0.86), lineWidth: 2))
                 .scaleEffect(pulse ? 1.22 : 1)
+                .accessibilityHidden(true)
         }
     }
 
@@ -145,7 +168,7 @@ struct FloatingCompanionView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
                     Text(visual.stateSummary)
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
+                        .font(.system(size: 11, weight: .bold, design: companionFontDesign))
                         .foregroundStyle(stateColor)
                     Spacer(minLength: 0)
                 }
@@ -181,7 +204,7 @@ struct FloatingCompanionView: View {
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 Text("等待新任务")
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .font(.system(size: 12, weight: .bold, design: companionFontDesign))
                     .foregroundStyle(.white)
                 Text("当前没有活跃会话")
                     .font(.system(size: 10))
@@ -211,7 +234,7 @@ struct FloatingCompanionView: View {
     }
 
     private var companionBackground: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
+        RoundedRectangle(cornerRadius: companionCornerRadius, style: .continuous)
             .fill(
                 LinearGradient(
                     colors: [
@@ -223,7 +246,7 @@ struct FloatingCompanionView: View {
                 )
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                RoundedRectangle(cornerRadius: companionCornerRadius, style: .continuous)
                     .stroke(Color.white.opacity(0.14), lineWidth: 1)
             }
     }
@@ -246,6 +269,26 @@ struct FloatingCompanionView: View {
         case .success: return .cyan
         case .failure: return .red
         }
+    }
+
+    private var companionCornerRadius: CGFloat {
+        switch visual.theme {
+        case .system: return 18
+        case .friendly: return 24
+        case .technical: return 8
+        }
+    }
+
+    private var identityCornerRadius: CGFloat {
+        switch visual.theme {
+        case .system: return 12
+        case .friendly: return 21
+        case .technical: return 5
+        }
+    }
+
+    private var companionFontDesign: Font.Design {
+        visual.theme == .technical ? .monospaced : .rounded
     }
 
     private func setBubbleVisible(_ visible: Bool) {

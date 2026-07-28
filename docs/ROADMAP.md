@@ -76,6 +76,9 @@ Implemented:
 - A bounded local diagnostics history (100 state transitions) with consecutive
   duplicate suppression, `0600` persistence, path/URL/credential redaction, and
   a recent-history view in Settings.
+- Composable diagnostics-history filters for transport, state, and text, plus
+  text copy and `0600` JSON export through the same second-pass redaction
+  boundary.
 - One-click hook repair, permission settings routes, redacted support bundle,
   local privacy documentation, and a public issue template.
 - Conversation details that default to human dialogue; tool payloads are a
@@ -88,8 +91,9 @@ Implemented:
 
 Still required:
 
-- Optional diagnostics history filters/export after the bounded replay view has
-  been exercised on real degraded transports.
+- Exercise diagnostics filters and export against real degraded transports on
+  a clean machine; fixture coverage validates privacy and formatting but not
+  operator usefulness under a live failure.
 - Validate first-run wording and retention defaults on a clean-machine
   install/uninstall acceptance run.
 
@@ -107,14 +111,18 @@ Implemented:
 - A distinct compact companion hierarchy driven by the same primary session:
   provider identity, semantic state, current-session card, Reduce Motion aware
   ambient motion, and visible/keyboard return-to-notch controls.
+- User-selectable system, friendly mascot, and technical themes with a global
+  default and independent per-engine overrides; all current artwork uses native
+  system symbols and shapes.
 - Deterministic geometry fixtures for representative 13/14/16-inch notch,
   non-notch, compact, negative-coordinate external, display-removal, and
   detached companion bounds.
 
 Still required:
 
-- User-selectable mascot themes/assets per engine; the current compact companion
-  provides distinct built-in family glyphs without external artwork.
+- Optional original mascot artwork if a future design pass can establish
+  licensing, accessibility, and reduced-motion variants without weakening the
+  current status-first hierarchy.
 - Pixel-level screenshot tests for notch, non-notch, and external displays;
   the current geometry fixtures do not claim rendered-pixel coverage.
 

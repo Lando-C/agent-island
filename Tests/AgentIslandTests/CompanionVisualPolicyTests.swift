@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ling
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Foundation
 @testable import AgentIsland
 
@@ -51,6 +52,33 @@ struct CompanionVisualPolicyTests {
         #expect(!visual.phaseGlyph.isEmpty)
     }
 
+    @Test("Built-in themes produce distinct family treatments")
+    func themes() {
+        for theme in CompanionTheme.allCases {
+            let glyphs = AgentFamily.allCases.map {
+                CompanionVisualPolicy.resolve(
+                    family: $0,
+                    surface: .cli,
+                    phase: .working,
+                    theme: theme
+                ).familyGlyph
+            }
+            #expect(Set(glyphs).count == AgentFamily.allCases.count)
+            for glyph in glyphs {
+                #expect(!glyph.isEmpty)
+                #expect(NSImage(systemSymbolName: glyph, accessibilityDescription: nil) != nil)
+            }
+        }
+        #expect(
+            CompanionVisualPolicy.resolve(
+                family: .codex,
+                surface: .cli,
+                phase: .working,
+                theme: .friendly
+            ).theme == .friendly
+        )
+    }
+
     private var passivePhases: [AgentPhase] {
         [.needsAttention, .queued, .done, .error, .online, .idle, .available, .offline]
     }
@@ -87,6 +115,33 @@ final class CompanionVisualPolicyTests: XCTestCase {
         XCTAssertEqual(policy(.done).stateTone, .success)
         XCTAssertEqual(policy(.error).stateTone, .failure)
         XCTAssertEqual(policy(.queued).stateTone, .waiting)
+    }
+
+    func testThemes() {
+        for theme in CompanionTheme.allCases {
+            let glyphs = AgentFamily.allCases.map {
+                CompanionVisualPolicy.resolve(
+                    family: $0,
+                    surface: .cli,
+                    phase: .working,
+                    theme: theme
+                ).familyGlyph
+            }
+            XCTAssertEqual(Set(glyphs).count, AgentFamily.allCases.count)
+            for glyph in glyphs {
+                XCTAssertFalse(glyph.isEmpty)
+                XCTAssertNotNil(NSImage(systemSymbolName: glyph, accessibilityDescription: nil))
+            }
+        }
+        XCTAssertEqual(
+            CompanionVisualPolicy.resolve(
+                family: .codex,
+                surface: .cli,
+                phase: .working,
+                theme: .friendly
+            ).theme,
+            .friendly
+        )
     }
 
     private func policy(_ phase: AgentPhase) -> CompanionVisualPolicy {

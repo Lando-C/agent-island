@@ -134,8 +134,35 @@ final class DiagnosticsHistoryStore: ObservableObject {
         return (try? decoder.decode([DiagnosticsHistoryEntry].self, from: data)) ?? []
     }
 
+    /// Re-applies the history store's privacy boundary before data leaves the
+    /// diagnostics model layer. This protects exports from manually constructed
+    /// entries and legacy files in addition to entries recorded by this store.
+    static func sanitizedForExternalUse(
+        _ entry: DiagnosticsHistoryEntry
+    ) -> DiagnosticsHistoryEntry {
+        DiagnosticsHistoryEntry(
+            id: entry.id,
+            recordedAt: entry.recordedAt,
+            transportID: safeIdentifier(entry.transportID),
+            transportName: safeName(entry.transportName),
+            state: entry.state,
+            protocolVersion: safeProtocol(entry.protocolVersion),
+            endpoint: redactedEndpoint(entry.endpoint),
+            failure: redactedFailure(entry.failure)
+        )
+    }
+
     private static func safeIdentifier(_ value: String) -> String {
-        String(value.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }.prefix(80))
+        let normalized = value.lowercased()
+        let sensitiveMarkers = [
+            "api_key", "apikey", "authorization", "password", "secret", "token"
+        ]
+        if sensitiveMarkers.contains(where: normalized.contains) {
+            return "redacted"
+        }
+        return String(
+            value.filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }.prefix(80)
+        )
     }
 
     private static func safeName(_ value: String) -> String {

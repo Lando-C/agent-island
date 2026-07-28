@@ -668,7 +668,8 @@
 协议依据：
 
 - 使用本机 Codex CLI 的
-  `codex app-server generate-json-schema --experimental` 生成当前协议 schema。
+  `codex app-server generate-json-schema --experimental` 生成当前协议 schema；
+  fixture 记录生成版本 `codex-cli 0.145.0`。
 - 覆盖 `item/tool/requestUserInput`、
   `item/commandExecution/requestApproval`、
   `item/fileChange/requestApproval` 和
@@ -690,6 +691,12 @@
   cwd、questions 和 permissions；缺失或畸形时不创建可写回请求。
 - permissions allow 在原始 permission profile 无法解析时返回 nil，不再生成
   空权限回复；command/file approval 收到错误 decision 类型时也不再隐式 decline。
+- JSON-RPC id 和 startedAtMs 只接受协议允许的整数形态，不接受 Bool 或小数；
+  command approval 若未提供本 UI 支持的 accept/decline 组合则不创建岛内请求。
+- 如果本地状态异常导致无法生成 Codex result，PendingRequest 会回写为 failed，
+  不再停留在“已允许/已回复”的假成功状态。
+- 已知交互方法若字段或本地回复不受支持，会返回标准 JSON-RPC error 并结束请求，
+  避免 broker 一直等待一个永远不会到达的 result。
 - Settings Diagnostics 继续分别显示 Route/Protocol 和 Endpoint；endpoint 只在
   确实位于用户 home 下时缩写为 `~`，避免对中间字符串做错误替换。
 

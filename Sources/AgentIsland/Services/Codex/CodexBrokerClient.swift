@@ -295,7 +295,19 @@ final class CodexBrokerClient {
             fromServerMethod: method,
             rawID: rawID,
             params: params
-        ) else { return }
+        ) else {
+            if CodexBrokerProtocol.isInteractiveServerMethod(method) {
+                _ = send([
+                    "id": rawID,
+                    "error": [
+                        "code": -32602,
+                        "message": "Unsupported Codex request shape"
+                    ]
+                ])
+                islandLog("codex broker rejected request method=\(method)")
+            }
+            return
+        }
         rpcIDsByPendingID[request.pendingID] = rawID
         conversations.ingestHookRequest(request)
         DispatchQueue.main.async { [weak self] in
@@ -336,7 +348,21 @@ final class CodexBrokerClient {
             responseSchema: request.responseSchema,
             toolInputJSON: request.toolInputJSON,
             decision: decision
-        ) else { return }
+        ) else {
+            if send([
+                "id": rawID,
+                "error": [
+                    "code": -32603,
+                    "message": "Unable to encode Codex response"
+                ]
+            ]) {
+                rpcIDsByPendingID.removeValue(forKey: request.id)
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.store.markFailed(id: request.id, message: "Codex 响应格式不受支持，请在原窗口处理")
+            }
+            return
+        }
         if send(["id": rawID, "result": result]) {
             rpcIDsByPendingID.removeValue(forKey: request.id)
             islandLog("codex broker responded request=\(request.id)")

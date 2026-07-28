@@ -1,6 +1,7 @@
 {
   "fixtureVersion": 1,
   "source": "codex app-server generate-json-schema --experimental",
+  "schemaGeneratedWith": "codex-cli 0.145.0",
   "request": {
     "id": "file-request-redacted",
     "method": "item/fileChange/requestApproval",

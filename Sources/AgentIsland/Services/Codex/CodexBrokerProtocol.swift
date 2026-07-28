@@ -2,11 +2,24 @@
 // SPDX-License-Identifier: MIT
 
 import Foundation
+import CoreFoundation
 
 /// Pure mapping for the interactive portion of the Codex app-server protocol.
 /// Keeping this outside the socket client lets recorded JSON-RPC frames exercise
 /// exactly the same request and response rules without needing a live broker.
 enum CodexBrokerProtocol {
+    static func isInteractiveServerMethod(_ method: String) -> Bool {
+        switch method {
+        case "item/tool/requestUserInput",
+             "item/commandExecution/requestApproval",
+             "item/fileChange/requestApproval",
+             "item/permissions/requestApproval":
+            return true
+        default:
+            return false
+        }
+    }
+
     static func request(
         fromServerMethod method: String,
         rawID: Any,
@@ -18,7 +31,8 @@ enum CodexBrokerProtocol {
         let questions: [PendingQuestion]
         let permissionsJSON: String?
 
-        guard nonEmptyString(params["threadId"]) != nil,
+        guard let requestID = requestIDString(rawID),
+              nonEmptyString(params["threadId"]) != nil,
               nonEmptyString(params["turnId"]) != nil,
               nonEmptyString(params["itemId"]) != nil else { return nil }
 
@@ -31,19 +45,20 @@ enum CodexBrokerProtocol {
             questions = parsedQuestions
             permissionsJSON = nil
         case "item/commandExecution/requestApproval":
-            guard params["startedAtMs"] as? NSNumber != nil else { return nil }
+            guard isInteger(params["startedAtMs"]),
+                  supportsBinaryCommandDecision(params["availableDecisions"]) else { return nil }
             schema = "codex_app_server_command_approval"
             event = "PermissionRequest"
             questions = []
             permissionsJSON = nil
         case "item/fileChange/requestApproval":
-            guard params["startedAtMs"] as? NSNumber != nil else { return nil }
+            guard isInteger(params["startedAtMs"]) else { return nil }
             schema = "codex_app_server_file_approval"
             event = "PermissionRequest"
             questions = []
             permissionsJSON = nil
         case "item/permissions/requestApproval":
-            guard params["startedAtMs"] as? NSNumber != nil,
+            guard isInteger(params["startedAtMs"]),
                   nonEmptyString(params["cwd"]) != nil,
                   let permissions = params["permissions"] as? [String: Any],
                   let encodedPermissions = jsonString(permissions) else { return nil }
@@ -58,10 +73,10 @@ enum CodexBrokerProtocol {
         let command = commandText(params["command"])
         let question = questions.first?.prompt
         let detail = question
-            ?? (params["reason"] as? String)
+            ?? nonEmptyString(params["reason"])
             ?? command
-            ?? (params["grantRoot"] as? String)
-            ?? (params["cwd"] as? String)
+            ?? nonEmptyString(params["grantRoot"])
+            ?? nonEmptyString(params["cwd"])
             ?? "Codex 正在等待你的决定"
 
         return HookSocketRequest(
@@ -76,7 +91,7 @@ enum CodexBrokerProtocol {
             rawSession: nil,
             primarySession: nil,
             parentSession: nil,
-            requestID: stringify(rawID),
+            requestID: requestID,
             tool: method,
             toolInputSummary: command ?? detail,
             toolRisk: nil,
@@ -162,8 +177,10 @@ enum CodexBrokerProtocol {
     }
 
     private static func commandText(_ value: Any?) -> String? {
-        if let command = value as? String, !command.isEmpty { return command }
-        if let command = value as? [String], !command.isEmpty { return command.joined(separator: " ") }
+        if let command = nonEmptyString(value) { return command }
+        if let command = value as? [String], !command.isEmpty {
+            return nonEmptyString(command.joined(separator: " "))
+        }
         return nil
     }
 
@@ -184,10 +201,24 @@ enum CodexBrokerProtocol {
         return trimmed.isEmpty ? nil : value
     }
 
-    private static func stringify(_ value: Any) -> String {
+    private static func requestIDString(_ value: Any) -> String? {
         if let value = value as? String { return value }
-        if let value = value as? NSNumber { return value.stringValue }
-        return String(describing: value)
+        guard isInteger(value), let number = value as? NSNumber else { return nil }
+        return number.stringValue
+    }
+
+    private static func isInteger(_ value: Any?) -> Bool {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID() else { return false }
+        let doubleValue = number.doubleValue
+        return doubleValue.isFinite && doubleValue.rounded(.towardZero) == doubleValue
+    }
+
+    private static func supportsBinaryCommandDecision(_ value: Any?) -> Bool {
+        guard let value, !(value is NSNull) else { return true }
+        guard let decisions = value as? [Any] else { return false }
+        let stringDecisions = Set(decisions.compactMap { $0 as? String })
+        return stringDecisions.contains("accept") && stringDecisions.contains("decline")
     }
 
 }

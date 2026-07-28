@@ -163,11 +163,45 @@ private func codexBrokerRejectsUnsupportedShapes() -> Bool {
         toolInputJSON: nil,
         decision: .answer(["scope": ["Current task"]])
     )
+    let booleanRequestID = CodexBrokerProtocol.request(
+        fromServerMethod: "item/fileChange/requestApproval",
+        rawID: true,
+        params: [
+            "threadId": "thread-redacted",
+            "turnId": "turn-redacted",
+            "itemId": "item-redacted",
+            "startedAtMs": 1
+        ]
+    )
+    let fractionalTimestamp = CodexBrokerProtocol.request(
+        fromServerMethod: "item/fileChange/requestApproval",
+        rawID: "fractional-time",
+        params: [
+            "threadId": "thread-redacted",
+            "turnId": "turn-redacted",
+            "itemId": "item-redacted",
+            "startedAtMs": 1.5
+        ]
+    )
+    let unsupportedCommandDecisions = CodexBrokerProtocol.request(
+        fromServerMethod: "item/commandExecution/requestApproval",
+        rawID: "unsupported-decisions",
+        params: [
+            "threadId": "thread-redacted",
+            "turnId": "turn-redacted",
+            "itemId": "item-redacted",
+            "startedAtMs": 1,
+            "availableDecisions": ["cancel"]
+        ]
+    )
 
     return missingRequiredFields == nil
         && malformedQuestion == nil
         && invalidPermissionAllow == nil
         && mismatchedApprovalDecision == nil
+        && booleanRequestID == nil
+        && fractionalTimestamp == nil
+        && unsupportedCommandDecisions == nil
         && CodexBrokerProtocol.request(
             fromServerMethod: "item/unknown/requestApproval",
             rawID: 1,
@@ -178,6 +212,9 @@ private func codexBrokerRejectsUnsupportedShapes() -> Bool {
             toolInputJSON: nil,
             decision: .allow
         ) == nil
+        && CodexBrokerProtocol.isInteractiveServerMethod("item/tool/requestUserInput")
+        && CodexBrokerProtocol.isInteractiveServerMethod("item/commandExecution/requestApproval")
+        && !CodexBrokerProtocol.isInteractiveServerMethod("item/unknown/requestApproval")
 }
 
 #if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST

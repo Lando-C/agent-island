@@ -66,26 +66,12 @@ enum TerminalFocuser {
     private static func focusOutcome(_ target: TerminalJumpTarget) -> FocusOutcome {
         let normalizedName = normalizedAppName(target.appName)
 
-        if normalizedName == "WezTerm",
-           let pane = target.sessionIdentifier ?? target.windowID,
-           focusWezTermPane(pane) {
-            return FocusOutcome(success: activate(target), route: "WezTerm exact pane")
+        if normalizedName == "WezTerm" {
+            return focusWezTerm(target)
         }
 
-        if normalizedName == "WezTerm",
-           focusWezTermByContext(target) {
-            return FocusOutcome(success: activate(target), route: "WezTerm TTY/CWD pane")
-        }
-
-        if normalizedName == "kitty",
-           let window = target.windowID ?? target.sessionIdentifier,
-           focusKittyWindow(window) {
-            return FocusOutcome(success: activate(target), route: "kitty exact window")
-        }
-
-        if normalizedName == "kitty",
-           focusKittyByCWD(target.cwd) {
-            return FocusOutcome(success: activate(target), route: "kitty CWD match")
+        if normalizedName == "kitty" {
+            return focusKitty(target)
         }
 
         if normalizedName == "Ghostty",
@@ -317,44 +303,123 @@ enum TerminalFocuser {
         return ok
     }
 
-    private static func focusWezTermPane(_ pane: String) -> Bool {
-        guard !pane.isEmpty, let cli = wezTermCLIURL() else { return false }
+    private struct WezTermObservedCandidate {
+        var candidate: TerminalFocusCandidate
+        var environment: [String: String]?
+    }
+
+    private static func focusWezTerm(_ target: TerminalJumpTarget) -> FocusOutcome {
+        guard let cli = wezTermCLIURL() else {
+            return terminalFallback(target, terminal: "WezTerm", reason: "terminal helper unavailable")
+        }
+
+        var observations: [WezTermObservedCandidate] = []
+        var receivedValidMetadata = false
         for environment in wezTermEnvironments() {
-            let list = processOutput(cli, arguments: ["cli", "list", "--format", "json"], environment: environment)
-            guard wezTermPaneExists(pane, in: list) else { continue }
-            if runProcess(cli, arguments: ["cli", "activate-pane", "--pane-id", pane], environment: environment) {
-                return true
+            let result = processResult(cli, arguments: ["cli", "list", "--format", "json"], environment: environment)
+            guard result.succeeded,
+                  let candidates = TerminalHelperMetadataParser.wezTermCandidates(from: result.output) else { continue }
+            receivedValidMetadata = true
+            observations += candidates.map {
+                WezTermObservedCandidate(candidate: $0, environment: environment)
             }
         }
-        return false
+
+        let resolution = TerminalFocusCapabilityResolver.resolve(
+            target: target,
+            snapshot: TerminalFocusCapabilitySnapshot(
+                helperAvailable: true,
+                metadataFresh: receivedValidMetadata,
+                candidates: observations.map(\.candidate),
+                fallbackAvailable: canActivate(target)
+            )
+        )
+        guard let candidate = resolution.candidate,
+              let paneID = candidate.stableID,
+              let observation = observations.first(where: { $0.candidate == candidate }) else {
+            return terminalFallback(target, terminal: "WezTerm", resolution: resolution)
+        }
+        guard runProcess(
+            cli,
+            arguments: ["cli", "activate-pane", "--pane-id", paneID],
+            environment: observation.environment
+        ) else {
+            return terminalFallback(
+                target,
+                terminal: "WezTerm",
+                reason: "helper activation failed after \(resolution.reason)"
+            )
+        }
+        guard activate(target) else {
+            return FocusOutcome(
+                success: false,
+                route: "WezTerm unavailable — app activation failed after \(resolution.reason)"
+            )
+        }
+        return FocusOutcome(success: true, route: "WezTerm \(resolution.precision.rawValue) — \(resolution.reason)")
     }
 
-    private static func focusWezTermByContext(_ target: TerminalJumpTarget) -> Bool {
-        guard let cli = wezTermCLIURL(),
-              let paneID = wezTermPaneID(cli: cli, tty: normalizedTTY(target.tty), cwd: target.cwd) else {
-            return false
+    private static func focusKitty(_ target: TerminalJumpTarget) -> FocusOutcome {
+        guard let helper = executable(named: "kitten") ?? executable(named: "kitty") else {
+            return terminalFallback(target, terminal: "kitty", reason: "terminal helper unavailable")
         }
-        for environment in wezTermEnvironments() {
-            let list = processOutput(cli, arguments: ["cli", "list", "--format", "json"], environment: environment)
-            guard wezTermPaneExists(paneID, in: list) else { continue }
-            if runProcess(cli, arguments: ["cli", "activate-pane", "--pane-id", paneID], environment: environment) {
-                return true
-            }
+        let result = processResult(helper, arguments: ["@", "ls"])
+        let candidates = result.succeeded
+            ? TerminalHelperMetadataParser.kittyCandidates(from: result.output)
+            : nil
+        let resolution = TerminalFocusCapabilityResolver.resolve(
+            target: target,
+            snapshot: TerminalFocusCapabilitySnapshot(
+                helperAvailable: true,
+                metadataFresh: candidates != nil,
+                candidates: candidates ?? [],
+                fallbackAvailable: canActivate(target)
+            )
+        )
+        guard let windowID = resolution.candidate?.stableID else {
+            return terminalFallback(target, terminal: "kitty", resolution: resolution)
         }
-        return false
+        guard runProcess(helper, arguments: ["@", "focus-window", "--match", "id:\(windowID)"]) else {
+            return terminalFallback(
+                target,
+                terminal: "kitty",
+                reason: "helper activation failed after \(resolution.reason)"
+            )
+        }
+        guard activate(target) else {
+            return FocusOutcome(
+                success: false,
+                route: "kitty unavailable — app activation failed after \(resolution.reason)"
+            )
+        }
+        return FocusOutcome(success: true, route: "kitty \(resolution.precision.rawValue) — \(resolution.reason)")
     }
 
-    private static func focusKittyWindow(_ window: String) -> Bool {
-        guard !window.isEmpty, let kitten = executable(named: "kitten") ?? executable(named: "kitty") else { return false }
-        return runProcess(kitten, arguments: ["@", "focus-window", "--match", "id:\(window)"])
+    private static func terminalFallback(
+        _ target: TerminalJumpTarget,
+        terminal: String,
+        resolution: TerminalFocusResolution
+    ) -> FocusOutcome {
+        terminalFallback(target, terminal: terminal, reason: resolution.reason)
     }
 
-    private static func focusKittyByCWD(_ cwd: String?) -> Bool {
-        guard let cwd, !cwd.isEmpty,
-              let kitten = executable(named: "kitten") ?? executable(named: "kitty") else {
-            return false
-        }
-        return runProcess(kitten, arguments: ["@", "focus-window", "--match", "cwd:\(cwd)"])
+    private static func terminalFallback(
+        _ target: TerminalJumpTarget,
+        terminal: String,
+        reason: String
+    ) -> FocusOutcome {
+        let activated = activate(target)
+        return FocusOutcome(
+            success: activated,
+            route: "\(terminal) \(activated ? "fallback" : "unavailable") — \(reason)"
+        )
+    }
+
+    private static func canActivate(_ target: TerminalJumpTarget) -> Bool {
+        target.bundleID != nil
+            || bundleID(for: normalizedAppName(target.appName)) != nil
+            || appActivationName(for: normalizedAppName(target.appName)) != nil
+            || target.pid != nil
     }
 
     private static func focusGhostty(_ target: TerminalJumpTarget) -> Bool {
@@ -614,39 +679,6 @@ enum TerminalFocuser {
         return executable(named: "wezterm")
     }
 
-    private static func wezTermPaneID(cli: URL, tty: String?, cwd: String?) -> String? {
-        for environment in wezTermEnvironments() {
-            let output = processOutput(cli, arguments: ["cli", "list", "--format", "json"], environment: environment)
-            guard let data = output.data(using: .utf8),
-                  let panes = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { continue }
-        let ttyName = tty?.components(separatedBy: "/").last
-        let cwd = cwd?.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        for pane in panes {
-            let paneTTY = pane["tty_name"] as? String
-            let paneTTYName = paneTTY?.components(separatedBy: "/").last
-            if let tty, !tty.isEmpty, paneTTY == tty || paneTTYName == ttyName {
-                return paneID(from: pane)
-            }
-        }
-
-        guard let cwd, !cwd.isEmpty else { return nil }
-        for pane in panes {
-            let paneCWD = (pane["cwd"] as? String) ?? (pane["current_working_dir"] as? String) ?? ""
-            if paneCWD == cwd || paneCWD.hasPrefix("\(cwd)/") || cwd.hasPrefix("\(paneCWD)/") {
-                return paneID(from: pane)
-            }
-        }
-        }
-        return nil
-    }
-
-    private static func wezTermPaneExists(_ targetPaneID: String, in output: String) -> Bool {
-        guard let data = output.data(using: .utf8),
-              let panes = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return false }
-        return panes.contains { paneID(from: $0) == targetPaneID }
-    }
-
     private static func wezTermEnvironments() -> [[String: String]?] {
         let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/share/wezterm")
         let sockets = (try? FileManager.default.contentsOfDirectory(
@@ -661,14 +693,6 @@ enum TerminalFocuser {
             } ?? []
         let environments = sockets.map { ["WEZTERM_UNIX_SOCKET": $0.path] }
         return environments.isEmpty ? [nil] : environments.map(Optional.some)
-    }
-
-    private static func paneID(from pane: [String: Any]) -> String? {
-        if let id = pane["pane_id"] as? String { return id }
-        if let id = pane["pane_id"] as? Int { return String(id) }
-        if let id = pane["paneId"] as? String { return id }
-        if let id = pane["paneId"] as? Int { return String(id) }
-        return nil
     }
 
     private static func executable(named name: String) -> URL? {
@@ -705,6 +729,19 @@ enum TerminalFocuser {
     }
 
     private static func processOutput(_ executable: URL, arguments: [String], environment: [String: String]? = nil) -> String {
+        processResult(executable, arguments: arguments, environment: environment).output
+    }
+
+    private struct ProcessResult {
+        var output: String
+        var succeeded: Bool
+    }
+
+    private static func processResult(
+        _ executable: URL,
+        arguments: [String],
+        environment: [String: String]? = nil
+    ) -> ProcessResult {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -715,11 +752,14 @@ enum TerminalFocuser {
         do {
             try process.run()
         } catch {
-            return ""
+            return ProcessResult(output: "", succeeded: false)
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        return String(data: data, encoding: .utf8) ?? ""
+        return ProcessResult(
+            output: String(data: data, encoding: .utf8) ?? "",
+            succeeded: process.terminationStatus == 0
+        )
     }
 
     private static func runAppleScript(_ source: String) -> String {

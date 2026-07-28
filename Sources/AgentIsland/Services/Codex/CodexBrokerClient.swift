@@ -75,7 +75,7 @@ final class CodexBrokerClient {
 
     private func connect() {
         guard fd < 0 else { return }
-        let candidates = Self.discoverBrokerSockets()
+        let candidates = CodexBrokerEndpoint.candidates()
         guard !candidates.isEmpty else {
             health.markFailure(
                 id: TransportHealthStore.codexBrokerID,
@@ -87,14 +87,16 @@ final class CodexBrokerClient {
             return
         }
 
-        var connection: (fd: Int32, path: String)?
-        for path in candidates {
-            health.markAttempt(id: TransportHealthStore.codexBrokerID, name: "Codex App Server", endpoint: path)
-            if let socketFD = Self.connectSocket(path: path) {
-                connection = (socketFD, path)
-                break
+        let connection = CodexBrokerEndpoint.connectFirst(
+            candidates: candidates,
+            onAttempt: { [health] path in
+                health.markAttempt(
+                    id: TransportHealthStore.codexBrokerID,
+                    name: "Codex App Server",
+                    endpoint: path
+                )
             }
-        }
+        )
         guard let connection else {
             health.markFailure(
                 id: TransportHealthStore.codexBrokerID,
@@ -107,16 +109,16 @@ final class CodexBrokerClient {
             return
         }
 
-        let flags = fcntl(connection.fd, F_GETFL, 0)
-        if flags >= 0 { _ = fcntl(connection.fd, F_SETFL, flags | O_NONBLOCK) }
+        let flags = fcntl(connection.fileDescriptor, F_GETFL, 0)
+        if flags >= 0 { _ = fcntl(connection.fileDescriptor, F_SETFL, flags | O_NONBLOCK) }
         var noSigpipe: Int32 = 1
-        setsockopt(connection.fd, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
-        fd = connection.fd
+        setsockopt(connection.fileDescriptor, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
+        fd = connection.fileDescriptor
         endpoint = connection.path
 
-        let source = DispatchSource.makeReadSource(fileDescriptor: connection.fd, queue: queue)
+        let source = DispatchSource.makeReadSource(fileDescriptor: connection.fileDescriptor, queue: queue)
         source.setEventHandler { [weak self] in self?.readAvailable() }
-        source.setCancelHandler { close(connection.fd) }
+        source.setCancelHandler { close(connection.fileDescriptor) }
         readSource = source
         source.resume()
 
@@ -571,57 +573,6 @@ final class CodexBrokerClient {
             || text.contains("<compact_output_contract>")
             || text.contains("previous claude turn")
             || text.contains("stop-gate review")
-    }
-
-    private static func discoverBrokerSockets() -> [String] {
-        var candidates: [(Date, String)] = []
-        if let override = ProcessInfo.processInfo.environment["AGENT_ISLAND_CODEX_BROKER_SOCKET"], !override.isEmpty {
-            candidates.append((.distantFuture, override))
-        }
-        let roots = [NSTemporaryDirectory(), "/tmp"]
-        for root in Set(roots) {
-            guard let entries = try? FileManager.default.contentsOfDirectory(atPath: root) else { continue }
-            for entry in entries where entry.hasPrefix("cxc-") {
-                let path = URL(fileURLWithPath: root).appendingPathComponent(entry).appendingPathComponent("broker.sock").path
-                guard FileManager.default.fileExists(atPath: path) else { continue }
-                let date = (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
-                candidates.append((date, path))
-            }
-        }
-        var seen = Set<String>()
-        return candidates.sorted { $0.0 > $1.0 }.compactMap { _, path in
-            guard seen.insert(path).inserted else { return nil }
-            return path
-        }
-    }
-
-    private static func connectSocket(path: String) -> Int32? {
-        let socketFD = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard socketFD >= 0 else { return nil }
-        var address = sockaddr_un()
-        address.sun_family = sa_family_t(AF_UNIX)
-        let bytes = Array(path.utf8)
-        guard bytes.count < MemoryLayout.size(ofValue: address.sun_path) else {
-            close(socketFD)
-            return nil
-        }
-        let capacity = MemoryLayout.size(ofValue: address.sun_path)
-        withUnsafeMutablePointer(to: &address.sun_path) { pointer in
-            pointer.withMemoryRebound(to: CChar.self, capacity: capacity) { target in
-                for (index, byte) in bytes.enumerated() { target[index] = CChar(bitPattern: byte) }
-                target[bytes.count] = 0
-            }
-        }
-        let result = withUnsafePointer(to: &address) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                Darwin.connect(socketFD, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
-            }
-        }
-        guard result == 0 else {
-            close(socketFD)
-            return nil
-        }
-        return socketFD
     }
 
     static func userInputResponsePayload(_ answers: [String: [String]]) -> [String: Any] {

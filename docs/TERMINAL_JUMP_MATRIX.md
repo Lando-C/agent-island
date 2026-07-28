@@ -12,8 +12,8 @@ application and is intentionally reported as such.
 | iTerm2 | AppleScript session ID, window/tab, then TTY | app activation | `iTerm2 session/TTY` |
 | Terminal.app | AppleScript TTY | app activation | `Terminal TTY` |
 | Ghostty | Accessibility/TTY and CWD matching | app activation | `Ghostty accessibility/TTY` |
-| WezTerm | `wezterm cli activate-pane` across GUI sockets | TTY/CWD pane lookup, app activation | `WezTerm exact pane` / `WezTerm TTY/CWD pane` |
-| kitty | remote-control window ID | CWD matching, app activation | `kitty exact window` / `kitty CWD match` |
+| WezTerm | `wezterm cli list` metadata + unique pane ID through the shared capability resolver | verified unique TTY/CWD, then app activation | `WezTerm exact/context — <reason>` / `WezTerm fallback/unavailable — <reason>` |
+| kitty | `kitty/kitten @ ls` metadata + unique window ID through the shared capability resolver | verified unique TTY/CWD, then app activation | `kitty exact/context — <reason>` / `kitty fallback/unavailable — <reason>` |
 | cmux | tab/terminal IDs via its local command interface | app activation | `cmux tab/terminal` |
 | Warp, Kaku, Wave, Alacritty | app activation where no verified pane API is available | process activation | `application activation fallback` |
 

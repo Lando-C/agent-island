@@ -15,7 +15,7 @@ Implemented:
 - Session-first state reduction, duplicate suppression, old-session retention,
   PID/command-chain/TTY/tmux liveness, and source evidence labels.
 - Incremental event-log and Claude/Codex transcript ingestion.
-- Browser Bridge v2 for ChatGPT, Claude, and Codex Web. It is explicitly a
+- Browser Bridge v3 for ChatGPT, Claude, and Codex Web. It is explicitly a
   non-authoritative DOM signal and never scans conversation text for approvals.
 - Regression coverage for session lifecycle, liveness, Hook approval, and Hook
   question-answer socket round trips.
@@ -54,14 +54,18 @@ Implemented:
 - Offline terminal capability fixtures for missing helpers, stale metadata,
   duplicate stable IDs, multiple windows, and ambiguous TTY/CWD matches. The
   shared contract classifies only fresh, unique identities as exact or context.
+- WezTerm and kitty runtime helper metadata now passes through the shared
+  capability contract before focus. Invalid JSON, non-zero helper exit, stale
+  metadata, ambiguous matches, or activation failure cannot report an exact or
+  context route.
 
 Still required:
 
 - Real-machine regression matrix for Ghostty, WezTerm, kitty, Warp, and Kaku.
 - Verified Warp workspace/tab and Kaku pane targeting. Until a stable local API
   is available, they remain application-activation fallbacks.
-- Connect terminal-specific metadata adapters to the shared capability contract;
-  the current fixtures validate the policy independently of installed apps.
+- Connect Ghostty/cmux and future Warp/Kaku metadata adapters to the same shared
+  capability contract where those terminals expose a stable local interface.
 
 ## P2: Explainability and Product Operations
 
@@ -69,6 +73,9 @@ Implemented:
 
 - Diagnostics with transport state, protocol version, last success, endpoint,
   and failure reason.
+- A bounded local diagnostics history (100 state transitions) with consecutive
+  duplicate suppression, `0600` persistence, path/URL/credential redaction, and
+  a recent-history view in Settings.
 - One-click hook repair, permission settings routes, redacted support bundle,
   local privacy documentation, and a public issue template.
 - Conversation details that default to human dialogue; tool payloads are a
@@ -76,7 +83,8 @@ Implemented:
 
 Still required:
 
-- A dedicated diagnostics history view with redacted event replay.
+- Optional diagnostics history filters/export after the bounded replay view has
+  been exercised on real degraded transports.
 - A guided first-run checklist that can distinguish required permissions from
   optional terminal integrations.
 - Explicit data-retention controls for local event and transcript projections.

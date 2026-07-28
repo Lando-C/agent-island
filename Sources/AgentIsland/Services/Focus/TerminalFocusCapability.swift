@@ -137,3 +137,70 @@ enum TerminalFocusCapabilityResolver {
         return value.hasSuffix("/") ? String(value.dropLast()) : value
     }
 }
+
+/// Parses terminal helper responses into the same candidates consumed by the
+/// conservative capability resolver. A `nil` result means that the helper did
+/// not return valid metadata; callers must treat that as stale/unavailable
+/// rather than as an empty, authoritative terminal list.
+enum TerminalHelperMetadataParser {
+    static func wezTermCandidates(from output: String) -> [TerminalFocusCandidate]? {
+        guard let rows = jsonArray(from: output) as? [[String: Any]] else { return nil }
+        return rows.map { row in
+            TerminalFocusCandidate(
+                stableID: stringValue(row["pane_id"] ?? row["paneId"]),
+                tty: stringValue(row["tty_name"] ?? row["tty"]),
+                cwd: pathValue(row["cwd"] ?? row["current_working_dir"])
+            )
+        }
+    }
+
+    static func kittyCandidates(from output: String) -> [TerminalFocusCandidate]? {
+        guard let osWindows = jsonArray(from: output) as? [[String: Any]] else { return nil }
+        return osWindows.flatMap { osWindow -> [TerminalFocusCandidate] in
+            guard let tabs = osWindow["tabs"] as? [[String: Any]] else { return [] }
+            return tabs.flatMap { tab -> [TerminalFocusCandidate] in
+                guard let windows = tab["windows"] as? [[String: Any]] else { return [] }
+                return windows.map { window in
+                    let processes = window["foreground_processes"] as? [[String: Any]]
+                    return TerminalFocusCandidate(
+                        stableID: stringValue(window["id"]),
+                        tty: stringValue(window["tty"] ?? processes?.first?["tty"]),
+                        cwd: pathValue(window["cwd"] ?? processes?.first?["cwd"])
+                    )
+                }
+            }
+        }
+    }
+
+    private static func jsonArray(from output: String) -> Any? {
+        guard let data = output.data(using: .utf8), !data.isEmpty else { return nil }
+        return try? JSONSerialization.jsonObject(with: data)
+    }
+
+    private static func stringValue(_ value: Any?) -> String? {
+        switch value {
+        case let value as String:
+            return value
+        case _ as Bool:
+            return nil
+        case let value as Int:
+            return String(value)
+        case let value as NSNumber:
+            return value.stringValue
+        default:
+            return nil
+        }
+    }
+
+    private static func pathValue(_ value: Any?) -> String? {
+        guard let value = stringValue(value)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty else {
+            return nil
+        }
+        if value.hasPrefix("file://"), let url = URL(string: value) {
+            return url.path
+        }
+        return value
+    }
+}

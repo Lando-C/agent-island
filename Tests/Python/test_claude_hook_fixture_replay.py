@@ -9,7 +9,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURES = Path(__file__).resolve().parent / "Fixtures"
+FIXTURES = ROOT / "Tests" / "AgentIslandTests" / "Fixtures"
 BRIDGE_PATH = ROOT / "scripts" / "agent-island-bridge.py"
 SPEC = importlib.util.spec_from_file_location("agent_island_bridge", BRIDGE_PATH)
 assert SPEC and SPEC.loader

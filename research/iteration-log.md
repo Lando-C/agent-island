@@ -787,3 +787,59 @@ Browser Bridge v3：
   broker 审批协议。
 - Terminal capability resolver 尚未替代各 terminal focuser 的运行时探针；
   真机 exact/context/fallback 矩阵仍是下一轮工作。
+
+## 2026-07-28 Iteration 17 - Runtime focus contracts and redacted diagnostics history
+
+目标：
+
+- 把 Iteration 16 的 terminal capability policy 接入真实 helper metadata，
+  避免测试模型与生产 route 分离。
+- 建立有界、可查看、默认脱敏的传输诊断历史，帮助复现短暂 degraded/failure。
+- 收敛 Swift App 内重复的 Codex broker socket 发现和连接边界。
+
+终端运行时接线：
+
+- WezTerm `cli list --format json` 和 kitty `@ ls` 的真实输出先解析为统一
+  `TerminalFocusCandidate`，再交给 `TerminalFocusCapabilityResolver`。
+- 只有 helper 退出成功、JSON 有效、metadata 新鲜且 stable ID/TTY/CWD
+  唯一匹配时，才会执行目标激活并报告 `exact` 或 `context`。
+- helper 缺失、非零退出、无效 JSON、重复 stable ID、多窗口上下文歧义、
+  未匹配、pane/window 激活失败或 App 激活失败均保守降为
+  `fallback/unavailable`。
+- Diagnostics route 同时记录精度和降级原因；新增 WezTerm/kitty helper
+  shape、路径规范化和歧义回退测试。
+
+脱敏 Diagnostics history：
+
+- 新增 `DiagnosticsHistoryStore`，本地最多保留 100 条 transport 状态变化，
+  连续同态记录自动去重。
+- 只保存 transport id/name、state、protocol/route、脱敏 endpoint、错误摘要
+  和时间；不保存对话、命令、原始 event/payload 或凭证。
+- URL user/password/query/fragment、Bearer、API key/token/secret、UUID、home/
+  temp/TTY/任意绝对路径均在持久化前处理；文件权限固定为 `0600`。
+- Settings Diagnostics 展示最近 12 条，明确说明数据边界。
+- 测试覆盖上限、去重、顺序、重载、权限和秘密不落盘。
+
+Codex broker 边界：
+
+- 新增 `CodexBrokerEndpoint`，统一 Swift App 内显式 override、临时目录扫描、
+  mtime 排序、路径去重、顺序连接和首个成功停止。
+- `CodexBrokerClient` 删除重复 discovery/connect 实现，协议初始化、请求解析
+  和未知 schema fail-closed 语义保持不变。
+- Python `codex-broker-probe` 继续作为 App 未运行时的独立诊断入口；架构文档
+  明确两端遵守同一发现顺序，但生产 App 不调用脚本或建立第二条连接。
+
+验证：
+
+- macOS 15.4 SDK 下生产 App 和全部 XCTest target 编译、链接通过。
+- Diagnostics、Codex endpoint 和 terminal helper 新测试均进入生产测试目标。
+- 本机 Command Line Tools 仍缺少 XCTest PlatformPath；实际 XCTest 由
+  GitHub Actions macOS runner 强制执行。
+
+遗留边界：
+
+- WezTerm/kitty 仍需真实多窗口和 helper 缺失场景的机器矩阵。
+- Ghostty、cmux、Warp 和 Kaku 尚未统一接入 capability resolver；没有稳定
+  local API 的终端继续只报告 fallback。
+- Diagnostics history 暂不包含搜索、筛选或导出；先验证 100 条有界数据对
+  排障是否足够，再决定是否扩大产品面。

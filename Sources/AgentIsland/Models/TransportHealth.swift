@@ -66,10 +66,12 @@ final class TransportHealthStore: ObservableObject {
     private let queue = DispatchQueue(label: "local.agent-island.transport-health")
     private var values: [String: TransportHealthSnapshot]
     private let outputURL: URL
+    private let history: DiagnosticsHistoryStore?
 
-    init(outputURL: URL? = nil) {
+    init(outputURL: URL? = nil, history: DiagnosticsHistoryStore? = nil) {
         self.outputURL = outputURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".agent-island/transport-health.json")
+        self.history = history ?? (outputURL == nil ? .shared : nil)
         let initial = [
             TransportHealthSnapshot.initial(id: Self.hookSocketID, name: "Claude Hook Socket"),
             TransportHealthSnapshot.initial(id: Self.codexBrokerID, name: "Codex App Server"),
@@ -152,6 +154,7 @@ final class TransportHealthStore: ObservableObject {
             self.values[id] = value
             let ordered = self.values.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             self.persist(ordered)
+            self.history?.record(value)
             DispatchQueue.main.async { [weak self] in
                 self?.snapshots = ordered
             }

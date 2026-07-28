@@ -28,7 +28,8 @@ final class AgentSettingsWindowController: NSWindowController {
             copyDiagnostics: copyDiagnostics,
             createSupportBundle: createSupportBundle,
             copyWebBridgeToken: copyWebBridgeToken,
-            transportHealth: .shared
+            transportHealth: .shared,
+            diagnosticsHistory: .shared
         )
         let hostingView = NSHostingView(rootView: view)
         let window = NSWindow(
@@ -77,6 +78,7 @@ struct AgentSettingsView: View {
     let createSupportBundle: () -> Void
     let copyWebBridgeToken: () -> Void
     @ObservedObject var transportHealth: TransportHealthStore
+    @ObservedObject var diagnosticsHistory: DiagnosticsHistoryStore
 
     @State private var selectedTab: SettingsTab = .diagnostics
     @State private var diagnosticsText = "点击 Run Diagnostics 生成报告。"
@@ -382,6 +384,18 @@ struct AgentSettingsView: View {
                 }
             }
 
+            settingSection("最近诊断历史（仅脱敏传输元数据，最多 \(DiagnosticsHistoryStore.defaultLimit) 条）") {
+                if diagnosticsHistory.entries.isEmpty {
+                    Text("暂无传输状态变更记录。不会记录对话、命令、凭证或原始事件。")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(diagnosticsHistory.entries.prefix(12)) { entry in
+                        diagnosticsHistoryRow(entry)
+                    }
+                }
+            }
+
             ScrollView {
                 Text(diagnosticsText)
                     .font(.system(size: 11, design: .monospaced))
@@ -446,6 +460,45 @@ struct AgentSettingsView: View {
         case .degraded: return "exclamationmark.triangle.fill"
         case .failed: return "xmark.octagon.fill"
         case .disabled, .unavailable: return "minus.circle"
+        }
+    }
+
+    private func diagnosticsHistoryRow(_ entry: DiagnosticsHistoryEntry) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: transportIcon(entry.state))
+                .foregroundColor(transportColor(entry.state))
+                .frame(width: 16)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(entry.transportName)
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(entry.state.label)
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundColor(transportColor(entry.state))
+                    Text(entry.recordedAt, style: .relative)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+                let metadata = [
+                    entry.protocolVersion.map { "Protocol/Route: \($0)" },
+                    entry.endpoint.map { "Endpoint: \($0)" }
+                ].compactMap { $0 }.joined(separator: " · ")
+                if !metadata.isEmpty {
+                    Text(metadata)
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                if let failure = entry.failure, !failure.isEmpty {
+                    Text(failure)
+                        .font(.system(size: 9))
+                        .foregroundColor(.orange)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
         }
     }
 

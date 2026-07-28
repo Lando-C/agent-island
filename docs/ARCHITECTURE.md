@@ -14,10 +14,21 @@ Agent Island is a native Swift macOS app plus small local scripts.
 | Focus | `Sources/AgentIsland/Services/Focus/` | terminal/tmux/app focusing and PID/TTY/pane inspection |
 | Focus capability contract | `Sources/AgentIsland/Services/Focus/TerminalFocusCapability.swift` | offline exact/context/fallback/unavailable classification for fresh, unambiguous terminal metadata |
 | Conversations | `Sources/AgentIsland/Services/Chat/ConversationStore.swift` | incremental transcript tailing plus Hook/broker event merge |
-| Codex transport | `Sources/AgentIsland/Services/Codex/CodexBrokerClient.swift` | one persistent initialized JSON-RPC connection for requests and threads |
+| Codex transport | `Sources/AgentIsland/Services/Codex/CodexBrokerClient.swift`, `CodexBrokerEndpoint.swift` | one persistent initialized JSON-RPC connection for requests and threads, with one tested discovery/socket boundary |
 | Hook socket | `Sources/AgentIsland/Services/Hooks/` | local Unix socket and pending hook response lifecycle |
 | Hooks | `scripts/agent-island-bridge.py`, `scripts/install-hooks` | Claude/Codex hook capture and install |
-| Diagnostics | `scripts/agent-island-diagnostics`, `scripts/agent-island-support-bundle` | health report and privacy-safe support artifact |
+| Diagnostics | `Sources/AgentIsland/Models/DiagnosticsHistory.swift`, `scripts/agent-island-diagnostics`, `scripts/agent-island-support-bundle` | bounded redacted transport history, health report, and privacy-safe support artifact |
+
+The packaged `scripts/codex-broker-probe` intentionally keeps a small,
+protocol-independent Python implementation of broker discovery. Diagnostics and
+support collection must continue to work when the Swift app is not installed or
+running. Both implementations honor the explicit socket override, scan the
+temporary roots for `cxc-*/broker.sock`, prefer newer sockets, and fall through
+failed candidates. The production app does not invoke the probe or maintain a
+second broker connection. Within the app, all discovery and Unix-socket opening
+goes through `CodexBrokerEndpoint`, while initialization, schema validation, and
+unknown-request fail-closed behavior remain in `CodexBrokerClient` and
+`CodexBrokerProtocol`.
 
 ## State Philosophy
 

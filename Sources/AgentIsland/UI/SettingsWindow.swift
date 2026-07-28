@@ -29,11 +29,13 @@ final class AgentSettingsWindowController: NSWindowController {
             createSupportBundle: createSupportBundle,
             copyWebBridgeToken: copyWebBridgeToken,
             transportHealth: .shared,
-            diagnosticsHistory: .shared
+            diagnosticsHistory: .shared,
+            onboarding: .shared,
+            dataRetention: .shared
         )
         let hostingView = NSHostingView(rootView: view)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 860, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -51,6 +53,7 @@ final class AgentSettingsWindowController: NSWindowController {
 }
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
+    case onboarding = "开始使用"
     case appearance = "外观"
     case system = "系统"
     case safety = "安全"
@@ -61,6 +64,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
+        case .onboarding: return "checklist"
         case .appearance: return "slider.horizontal.3"
         case .system: return "gearshape"
         case .safety: return "lock.shield"
@@ -79,8 +83,10 @@ struct AgentSettingsView: View {
     let copyWebBridgeToken: () -> Void
     @ObservedObject var transportHealth: TransportHealthStore
     @ObservedObject var diagnosticsHistory: DiagnosticsHistoryStore
+    @ObservedObject var onboarding: OnboardingChecklistStore
+    @ObservedObject var dataRetention: DataRetentionStore
 
-    @State private var selectedTab: SettingsTab = .diagnostics
+    @State private var selectedTab: SettingsTab = .onboarding
     @State private var diagnosticsText = "点击 Run Diagnostics 生成报告。"
     @State private var diagnosticsRunning = false
     @State private var autoApprovalEnabled = AutoApprovalStore.load().enabled
@@ -92,6 +98,7 @@ struct AgentSettingsView: View {
     @State private var floatingMode = IslandDisplayModeStore.mode == .floating
     @State private var soundEnabled = AgentIslandSoundSettings.enabled
     @State private var settingsMessage = ""
+    @State private var pendingCleanupScope: AgentIslandOwnedDataScope?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -102,7 +109,19 @@ struct AgentSettingsView: View {
         .frame(minWidth: 760, minHeight: 500)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
+            onboarding.markSeen()
             runDiagnostics()
+        }
+        .alert(item: $pendingCleanupScope) { scope in
+            Alert(
+                title: Text(cleanupTitle(scope)),
+                message: Text(cleanupMessage(scope)),
+                primaryButton: .destructive(Text("仅清理 Agent Island 数据")) {
+                    AgentIslandOwnedDataCleaner().clear(scope)
+                    settingsMessage = "清理已完成；Claude/Codex 原始 transcript 未被修改。"
+                },
+                secondaryButton: .cancel()
+            )
         }
     }
 
@@ -151,6 +170,8 @@ struct AgentSettingsView: View {
         VStack(alignment: .leading, spacing: 18) {
             header
             switch selectedTab {
+            case .onboarding:
+                onboardingTab
             case .appearance:
                 appearanceTab
             case .system:
@@ -179,6 +200,8 @@ struct AgentSettingsView: View {
 
     private var headerSubtitle: String {
         switch selectedTab {
+        case .onboarding:
+            return "先确认必需项，再按实际工作流选择集成。基础运行不要求系统权限。"
         case .appearance:
             return "控制刘海宽度和后续吉祥物展示。"
         case .system:
@@ -189,6 +212,66 @@ struct AgentSettingsView: View {
             return "把权限、Hook、Socket、tmux、终端跳转链路变成可见状态。"
         case .roadmap:
             return "公开发布前的产品化路线和功能覆盖面。"
+        }
+    }
+
+    private var onboardingTab: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                settingSection("基础要求") {
+                    Text("没有必须授予的 macOS 系统权限。只要启动 App，就能使用基础岛面和本地状态；下面的权限与桥接均按功能选用。")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(OnboardingChecklistStore.items.filter { $0.requirement == .required }) {
+                        onboardingRow($0)
+                    }
+                }
+                settingSection("可选集成") {
+                    ForEach(OnboardingChecklistStore.items.filter { $0.requirement == .optional }) {
+                        onboardingRow($0)
+                    }
+                }
+                settingSection("快捷入口") {
+                    HStack {
+                        Button("安装/修复 CLI Hooks") { reinstallHooks() }
+                        Button("辅助功能设置") {
+                            openSystemSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+                        }
+                        Button("通知设置") {
+                            openSystemSettings("x-apple.systempreferences:com.apple.Notifications-Settings.extension")
+                        }
+                    }
+                    Text("Hook 会写入 Agent Island 自有事件投影；原始 Provider transcript 始终由 Provider 管理。")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    private func onboardingRow(_ item: OnboardingChecklistItem) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: item.systemImage)
+                .foregroundColor(.accentColor)
+                .frame(width: 18)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(item.detail)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Toggle("已确认", isOn: Binding(
+                get: { onboarding.isCompleted(item.id) },
+                set: { onboarding.setCompleted(item.id, $0) }
+            ))
+            .toggleStyle(.checkbox)
+            .labelsHidden()
+            .help("这是本地清单标记，不会改变系统权限。")
         }
     }
 
@@ -299,6 +382,7 @@ struct AgentSettingsView: View {
     }
 
     private var safetyTab: some View {
+        ScrollView {
         VStack(alignment: .leading, spacing: 18) {
             settingSection("自动审批") {
                 Toggle("启用只读工具自动审批", isOn: $autoApprovalEnabled)
@@ -320,6 +404,66 @@ struct AgentSettingsView: View {
                 roadmapLine("manual_safe_shell", "看似只读的 shell，也仍需人工确认。")
                 roadmapLine("dangerous_shell", "含删除、强推、sudo、重定向等模式，永不自动通过。")
             }
+
+            settingSection("数据保留") {
+                Text("这些设置和清理动作只管理 ~/.agent-island 中的 Agent Island 自有数据。不会修改或删除 Claude、Codex 或其他 Provider 的原始 transcript。")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                retentionPicker("事件投影", selection: $dataRetention.settings.eventLog)
+                retentionPicker("诊断历史", selection: $dataRetention.settings.diagnostics)
+
+                Picker("对话内存投影", selection: $dataRetention.settings.conversationProjection) {
+                    ForEach(ConversationProjectionRetention.allCases) { period in
+                        Text(period.label).tag(period)
+                    }
+                }
+                .help("对话投影从不写入独立 transcript 文件。Provider 原始 transcript 不受影响。")
+
+                HStack {
+                    Button("清理事件投影…") { pendingCleanupScope = .events }
+                    Button("清理诊断历史…") { pendingCleanupScope = .diagnostics }
+                    Button("清理内存对话投影…") { pendingCleanupScope = .conversationProjection }
+                }
+
+                if !settingsMessage.isEmpty {
+                    Text(settingsMessage)
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        }
+    }
+
+    private func retentionPicker(
+        _ title: String,
+        selection: Binding<RetentionPeriod>
+    ) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(RetentionPeriod.allCases) { period in
+                Text(period.label).tag(period)
+            }
+        }
+    }
+
+    private func cleanupTitle(_ scope: AgentIslandOwnedDataScope) -> String {
+        switch scope {
+        case .events: return "清理本地事件投影？"
+        case .diagnostics: return "清理诊断历史？"
+        case .conversationProjection: return "清理内存对话投影？"
+        }
+    }
+
+    private func cleanupMessage(_ scope: AgentIslandOwnedDataScope) -> String {
+        switch scope {
+        case .events:
+            return "将清空 ~/.agent-island/events.jsonl。新的 Hook 事件仍会继续写入。"
+        case .diagnostics:
+            return "将清空 Agent Island 的脱敏诊断历史。当前传输状态不受影响。"
+        case .conversationProjection:
+            return "将丢弃当前进程中的对话缓存；再次打开详情时可从 Provider 原始 transcript 重新读取。"
         }
     }
 

@@ -16,6 +16,14 @@ Common files:
 - `agent-island.log`
 - `bridge.log`
 - `auto-approval.json`
+- `data-retention.json`
+- `diagnostics-history.json`
+- `events-pruned-at`
+
+The Safety settings offer 7/30/90-day retention for Agent Island's event
+projection and redacted diagnostics history. Conversation detail projection is
+memory-only. Cleanup controls are scoped to Agent Island-owned files and memory;
+they never delete Claude, Codex, or other provider-owned transcripts.
 
 ## Hook Configuration
 

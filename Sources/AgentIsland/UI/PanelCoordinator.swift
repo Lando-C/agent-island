@@ -196,10 +196,10 @@ final class PanelCoordinator: NSObject {
         let size = panelSize(on: screen)
         let frame: NSRect
         if displayMode == .floating {
-            let defaultOrigin = NSPoint(
-                x: screen.visibleFrame.maxX - size.width - 24,
-                y: screen.visibleFrame.midY - size.height / 2
-            )
+            let defaultOrigin = PanelGeometryPolicy.defaultFloatingFrame(
+                panelSize: size,
+                visibleFrame: screen.visibleFrame
+            ).origin
             let origin = IslandDisplayModeStore.floatingOrigin(on: screen) ?? defaultOrigin
             frame = clampedFloatingFrame(NSRect(origin: origin, size: size), screen: screen)
         } else {
@@ -217,19 +217,20 @@ final class PanelCoordinator: NSObject {
     }
 
     private func preferredScreen(for panel: NSPanel) -> NSScreen? {
-        if displayMode == .floating,
-           let displayID = IslandDisplayModeStore.lastFloatingDisplayID,
-           let restored = NSScreen.screens.first(where: { $0.displayId == displayID }) {
-            return restored
-        }
-        if displayMode == .floating, let current = panel.screen { return current }
-        return NSScreen.main ?? panel.screen
+        let screens = NSScreen.screens
+        let displayID = PanelScreenSelectionPolicy.preferredDisplayID(
+            displayMode: displayMode,
+            savedFloatingDisplayID: IslandDisplayModeStore.lastFloatingDisplayID,
+            currentDisplayID: panel.screen?.displayId,
+            mainDisplayID: NSScreen.main?.displayId,
+            availableDisplayIDs: screens.map(\.displayId)
+        )
+        return screens.first(where: { $0.displayId == displayID })
+            ?? NSScreen.main
+            ?? panel.screen
     }
 
     private func clampedFloatingFrame(_ frame: NSRect, screen: NSScreen) -> NSRect {
-        let visible = screen.visibleFrame.insetBy(dx: 8, dy: 8)
-        let x = min(max(frame.minX, visible.minX), max(visible.minX, visible.maxX - frame.width))
-        let y = min(max(frame.minY, visible.minY), max(visible.minY, visible.maxY - frame.height))
-        return NSRect(x: x, y: y, width: frame.width, height: frame.height)
+        PanelGeometryPolicy.clampedFloatingFrame(frame, visibleFrame: screen.visibleFrame)
     }
 }

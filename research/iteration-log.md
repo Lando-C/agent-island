@@ -843,3 +843,63 @@ Codex broker 边界：
   local API 的终端继续只报告 fallback。
 - Diagnostics history 暂不包含搜索、筛选或导出；先验证 100 条有界数据对
   排障是否足够，再决定是否扩大产品面。
+
+## 2026-07-28 Iteration 18 - Onboarding, retention, event extraction, and geometry fixtures
+
+目标：
+
+- 将首次运行的必需项与可选集成说清楚，避免用户误以为所有系统权限都是
+  Agent Island 启动前提。
+- 为 Agent Island 自有事件、诊断和内存对话投影提供明确保留策略，同时绝不
+  删除 Provider 原始 transcript。
+- 继续削薄 `main.swift`，并把多屏/刘海/浮动窗口几何变成可离线回放的策略。
+
+首次运行与数据保留：
+
+- 首次启动自动打开 Settings 的“开始使用”页；基础本地岛面不要求 macOS
+  系统权限，CLI Hooks、Accessibility、通知和 Browser Bridge 按工作流选用。
+- 引导完成状态仅保存在本机 UserDefaults，不会改变系统权限或静默安装集成。
+- 新增事件与诊断 7/30/90 天保留选项；默认 30 天。
+- 对话详情只允许“不保留内存投影”或“保留到退出 App”，不创建第二份
+  transcript。
+- 清理事件、诊断和内存对话投影均需明确二次确认；清理器只处理
+  `~/.agent-island` 自有投影或进程内缓存。
+- Hook 和手动 event 脚本读取同一 retention 配置；按小时或达到 1 MB 时执行
+  修剪，避免每个 Hook 都重写完整 JSONL。修剪状态 marker 和设置文件均为
+  `0600`。
+
+架构拆分：
+
+- 新增纯 `AgentEventNormalizer`，从 `AgentMonitor` 移出 family、surface、
+  phase 和 Hook lifecycle vocabulary 映射。
+- 7 个生产调用点使用统一静态契约；新增 provider alias、CLI 保守 fallback、
+  lifecycle override 和 phase alias 测试。
+- `main.swift` 本轮减少约 70 行；监控器仍然偏大，后续继续按
+  EventNormalizer/ProviderProbe/Presentation projection 边界拆分。
+
+布局回归：
+
+- 新增 `PanelGeometryPolicy` 和 `PanelScreenSelectionPolicy`，实际接入
+  `PanelCoordinator`、`IslandPanelSizing`、`NotchPlacement` 和 detached
+  companion。
+- Geometry fixtures 覆盖代表性的 13/14/16 英寸刘海、无刘海、紧凑屏、
+  负坐标外接屏、显示器移除/恢复以及 companion 默认位置和 bounds clamp。
+- 这些是无 WindowServer 依赖的确定性几何测试，不冒充 rendered pixel
+  screenshot tests；像素级回归仍保留为后续工作。
+
+验证：
+
+- macOS 15.4 SDK 下 production App、全部 Swift/XCTest target 和 Release
+  构建通过。
+- Python retention/Claude fixture replay、Browser Bridge、Shell、installer、
+  reducer 和 expansion controller 验证通过。
+- 本机 Command Line Tools 缺少 XCTest PlatformPath；真实 XCTest 继续由
+  GitHub Actions macOS runner 执行。
+
+遗留边界：
+
+- 首次运行文案和默认 30 天保留策略仍需 clean-machine 用户验收。
+- Geometry fixtures 不覆盖 SwiftUI/AppKit 渲染像素、动态字体或真实 menu bar
+  safe area。
+- `main.swift` 仍包含 AgentMonitor、大量探针和主视图；本轮只完成一块低风险
+  事件归一化拆分。

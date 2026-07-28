@@ -36,13 +36,21 @@ final class DiagnosticsHistoryStore: ObservableObject {
     private let queue = DispatchQueue(label: "local.agent-island.diagnostics-history")
     private let outputURL: URL
     private let limit: Int
+    private let usesConfiguredRetention: Bool
     private var storedEntries: [DiagnosticsHistoryEntry]
 
     init(outputURL: URL? = nil, limit: Int = defaultLimit) {
         self.outputURL = outputURL ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".agent-island/diagnostics-history.json")
         self.limit = max(1, limit)
-        let loaded = Self.load(from: self.outputURL)
+        usesConfiguredRetention = outputURL == nil
+        let configuredMaximumAge: TimeInterval? = outputURL == nil
+            ? TimeInterval(DataRetentionStore.shared.settings.diagnostics.days * 24 * 60 * 60)
+            : nil
+        let loaded = Self.load(from: self.outputURL).filter { entry in
+            guard let configuredMaximumAge else { return true }
+            return Date().timeIntervalSince(entry.recordedAt) <= configuredMaximumAge
+        }
         let bounded = Array(loaded.suffix(self.limit))
         entries = bounded.reversed()
         storedEntries = bounded
@@ -66,6 +74,14 @@ final class DiagnosticsHistoryStore: ObservableObject {
                 return
             }
             self.storedEntries.append(entry)
+            let maximumAge = self.usesConfiguredRetention
+                ? TimeInterval(DataRetentionStore.shared.settings.diagnostics.days * 24 * 60 * 60)
+                : nil
+            if let maximumAge {
+                self.storedEntries.removeAll {
+                    date.timeIntervalSince($0.recordedAt) > maximumAge
+                }
+            }
             if self.storedEntries.count > self.limit {
                 self.storedEntries.removeFirst(self.storedEntries.count - self.limit)
             }
@@ -79,6 +95,17 @@ final class DiagnosticsHistoryStore: ObservableObject {
 
     func flushForTesting() {
         queue.sync {}
+    }
+
+    func clear() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.storedEntries.removeAll()
+            self.persist([])
+            DispatchQueue.main.async { [weak self] in
+                self?.entries = []
+            }
+        }
     }
 
     private func persist(_ values: [DiagnosticsHistoryEntry]) {

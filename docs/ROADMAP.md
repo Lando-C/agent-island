@@ -80,14 +80,18 @@ Implemented:
   local privacy documentation, and a public issue template.
 - Conversation details that default to human dialogue; tool payloads are a
   compact, opt-in work record and large transcript reads start at the recent tail.
+- A guided first-run checklist that separates the no-permission local baseline
+  from optional CLI Hooks, Accessibility, notifications, and Browser Bridge.
+- Explicit 7/30/90-day retention for Agent Island event projections and
+  diagnostics history, plus disabled/until-quit conversation memory policies
+  and confirmed cleanup scoped away from provider transcripts.
 
 Still required:
 
 - Optional diagnostics history filters/export after the bounded replay view has
   been exercised on real degraded transports.
-- A guided first-run checklist that can distinguish required permissions from
-  optional terminal integrations.
-- Explicit data-retention controls for local event and transcript projections.
+- Validate first-run wording and retention defaults on a clean-machine
+  install/uninstall acceptance run.
 
 ## P3: Experience Layer
 
@@ -98,13 +102,17 @@ Implemented:
 - Detachable floating companion with long-press/downward-drag, per-display
   restoration, status bubble, and right-click return to the notch.
 - Optional local sound alerts for start, completion, and human attention.
+- Deterministic geometry fixtures for representative 13/14/16-inch notch,
+  non-notch, compact, negative-coordinate external, display-removal, and
+  detached companion bounds.
 
 Still required:
 
 - Per-engine mascot selection and a compact companion visual system that is not
   merely a resized notch panel.
 - Quiet hours, per-event sound selection, and notification throttling controls.
-- Screenshot-driven layout tests for notch, non-notch, and external displays.
+- Pixel-level screenshot tests for notch, non-notch, and external displays;
+  the current geometry fixtures do not claim rendered-pixel coverage.
 
 ## Release Readiness
 

@@ -100,10 +100,36 @@ final class ConversationStore: ObservableObject {
             state.watchers = max(0, state.watchers - 1)
             if state.watchers == 0 {
                 self.states.removeValue(forKey: key)
+                if DataRetentionStore.shared.settings.conversationProjection == .disabled {
+                    self.injectedItems.removeValue(forKey: key)
+                    DispatchQueue.main.async { [weak self] in
+                        self?.records.removeValue(forKey: key)
+                    }
+                }
             } else {
                 self.states[key] = state
             }
             self.stopTimerIfIdle()
+        }
+    }
+
+    /// Drops only Agent Island's in-memory conversation projection. Source
+    /// transcript files owned by Claude/Codex are never modified.
+    func clearInMemoryProjections() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            self.injectedItems.removeAll()
+            for key in self.states.keys {
+                guard var state = self.states[key] else { continue }
+                state.items.removeAll()
+                state.offset = 0
+                state.fragment = ""
+                state.nextLineNumber = 0
+                self.states[key] = state
+            }
+            DispatchQueue.main.async { [weak self] in
+                self?.records.removeAll()
+            }
         }
     }
 
@@ -172,6 +198,10 @@ final class ConversationStore: ObservableObject {
         guard !items.isEmpty else { return }
         queue.async { [weak self] in
             guard let self else { return }
+            if DataRetentionStore.shared.settings.conversationProjection == .disabled,
+               self.states[key]?.watchers ?? 0 == 0 {
+                return
+            }
             let merged = ChatDetailStore.deduplicated((self.injectedItems[key] ?? []) + items)
             self.injectedItems[key] = Array(merged.suffix(500))
             if var state = self.states[key] {

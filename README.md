@@ -48,12 +48,15 @@ The goal is not to show that an app is online. The goal is to answer:
   request and `Command-N` denies it.
 - Screen-safe positioning using visible screen bounds, with user-adjustable
   idle/working widths.
-- Settings window with Appearance, System, Safety, Diagnostics, and Roadmap
-  tabs.
+- Settings window with guided onboarding, Appearance, System, Safety,
+  Diagnostics, and Roadmap tabs.
 - Transport diagnostics for the Hook socket, Codex app server, conversation
   tailer, process/TTY probe, tmux pane probe, terminal focus matrix, and browser
   web bridge. Each transport reports
   connection state, protocol, last successful event, and failure reason.
+- Explicit 7/30/90-day retention for Agent Island event projections and
+  diagnostics history, plus an in-memory-only conversation projection policy.
+  Cleanup controls never delete provider-owned Claude/Codex transcripts.
 - Hook installer for:
   - Claude Code: `~/.claude/settings.json`
   - Codex CLI: `~/.codex/hooks.json` and `~/.codex/config.toml`

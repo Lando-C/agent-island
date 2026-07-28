@@ -59,9 +59,36 @@ with (root / "events.jsonl").open("a", encoding="utf-8") as fh:
 
 events_path = root / "events.jsonl"
 try:
-    if events_path.stat().st_size > 1_000_000:
-        lines = events_path.read_text(encoding="utf-8").splitlines()
-        events_path.write_text("\n".join(lines[-2000:]) + "\n", encoding="utf-8")
+    marker_path = root / "events-pruned-at"
+    now = time.time()
+    try:
+        last_pruned_at = float(marker_path.read_text(encoding="utf-8"))
+    except Exception:
+        last_pruned_at = 0
+    if events_path.stat().st_size < 1_000_000 and now - last_pruned_at < 60 * 60:
+        print(events_path)
+        raise SystemExit(0)
+    retention_path = root / "data-retention.json"
+    retention_days = 30
+    try:
+        retention = json.loads(retention_path.read_text(encoding="utf-8"))
+        retention_days = {"7_days": 7, "30_days": 30, "90_days": 90}.get(
+            str(retention.get("eventLog") or ""), 30
+        )
+    except Exception:
+        pass
+    cutoff = now - retention_days * 24 * 60 * 60
+    retained = []
+    for line in events_path.read_text(encoding="utf-8").splitlines():
+        try:
+            if float(json.loads(line).get("ts") or 0) >= cutoff:
+                retained.append(line)
+        except Exception:
+            pass
+    events_path.write_text(("\n".join(retained[-2000:]) + "\n") if retained else "", encoding="utf-8")
+    events_path.chmod(0o600)
+    marker_path.write_text(str(now), encoding="utf-8")
+    marker_path.chmod(0o600)
 except Exception:
     pass
 

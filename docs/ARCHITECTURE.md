@@ -7,10 +7,11 @@ Agent Island is a native Swift macOS app plus small local scripts.
 | Layer | Code | Responsibility |
 | --- | --- | --- |
 | App shell | `Sources/AgentIsland/main.swift` | menu-bar lifecycle, agent monitor, app/browser probes |
-| Panel coordination | `Sources/AgentIsland/UI/PanelCoordinator.swift` | notch/floating root view, multi-display geometry, window lifecycle |
+| Panel coordination | `Sources/AgentIsland/UI/PanelCoordinator.swift`, `PanelGeometryPolicy.swift` | notch/floating root view, deterministic multi-display geometry and screen restoration, window lifecycle |
 | UI | `Sources/AgentIsland/UI/` | island rows, expansion controller, detached companion, settings, chat windows |
 | Models | `Sources/AgentIsland/Models/` | jump targets, Codex broker thread model, transport health |
 | State | `Sources/AgentIsland/State/` | hook event reducer, session rollups, display mode, island presentation model |
+| Event normalization | `Sources/AgentIsland/Services/Events/AgentEventNormalizer.swift` | pure provider vocabulary mapping for family, surface, phase, and hook lifecycle names |
 | Focus | `Sources/AgentIsland/Services/Focus/` | terminal/tmux/app focusing and PID/TTY/pane inspection |
 | Focus capability contract | `Sources/AgentIsland/Services/Focus/TerminalFocusCapability.swift` | offline exact/context/fallback/unavailable classification for fresh, unambiguous terminal metadata |
 | Conversations | `Sources/AgentIsland/Services/Chat/ConversationStore.swift` | incremental transcript tailing plus Hook/broker event merge |
@@ -29,6 +30,12 @@ second broker connection. Within the app, all discovery and Unix-socket opening
 goes through `CodexBrokerEndpoint`, while initialization, schema validation, and
 unknown-request fail-closed behavior remain in `CodexBrokerClient` and
 `CodexBrokerProtocol`.
+
+Panel layout regression coverage uses deterministic geometry fixtures rather
+than screenshot UI tests. The fixtures cover representative built-in and
+external display frames, notch and non-notch placement, display removal and
+restoration, and floating companion bounds without requiring a logged-in
+WindowServer session. They validate geometry policy, not rendered pixels.
 
 ## State Philosophy
 

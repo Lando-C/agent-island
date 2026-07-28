@@ -2247,7 +2247,7 @@ final class AgentMonitor: ObservableObject {
     private func recentEventSessionIDs() -> [AgentFamily: Set<String>] {
         var result: [AgentFamily: Set<String>] = [:]
         for event in readRecentAgentEvents() {
-            guard let family = normalizeFamily(event.family ?? event.agent),
+            guard let family = AgentEventNormalizer.family(from: event.family ?? event.agent),
                   let session = event.session,
                   !session.isEmpty else {
                 continue
@@ -2447,12 +2447,12 @@ final class AgentMonitor: ObservableObject {
             }
 
             for event in events {
-                guard let family = normalizeFamily(event.family ?? event.agent),
-                      let phase = normalizeEventPhase(event) else {
+                guard let family = AgentEventNormalizer.family(from: event.family ?? event.agent),
+                      let phase = AgentEventNormalizer.phase(for: event) else {
                     continue
                 }
                 guard !shouldSuppressAuxiliaryEvent(event, family: family, phase: phase) else { continue }
-                let rawSurface = normalizeSurface(event.surface ?? event.channel) ?? .cli
+                let rawSurface = AgentEventNormalizer.surface(from: event.surface ?? event.channel)
                 let surface = resolvedSurface(
                     for: event,
                     family: family,
@@ -2466,7 +2466,7 @@ final class AgentMonitor: ObservableObject {
                     ? event.session!
                     : event.pid.map { "pid:\($0)" } ?? "global:\(family.rawValue)-\(surface.rawValue)"
                 let logicalSession = logicalSessionID(for: event, fallback: session)
-                let hookEvent = normalizeHookEventName(event)
+                let hookEvent = AgentEventNormalizer.hookEventName(for: event)
                 let resolved = ResolvedAgentEvent(
                     family: family,
                     surface: surface,
@@ -2751,7 +2751,7 @@ final class AgentMonitor: ObservableObject {
             let ts = event.ts ?? now
             guard now - ts <= eventMaxAge(for: phase) else { return nil }
 
-            let hookEvent = normalizeHookEventName(event)
+            let hookEvent = AgentEventNormalizer.hookEventName(for: event)
             let conversation = conversationInfo(for: event, family: family, session: session, conversations: conversations)
             var snapshot = AgentSnapshot.empty(family, surface)
             snapshot.sessionID = session
@@ -2914,7 +2914,7 @@ final class AgentMonitor: ObservableObject {
         next.blockedCount = max(next.blockedCount, rollup.attentionCount)
         next.pendingCount = max(next.pendingCount, rollup.queuedCount)
         next.completedCount = max(next.completedCount, rollup.doneCount)
-        let hookEvent = normalizeHookEventName(event)
+        let hookEvent = AgentEventNormalizer.hookEventName(for: event)
         let conversation = conversationInfo(for: event, family: snapshot.family, session: snapshot.sessionID, conversations: conversations)
 
         if hookEvent == "posttoolusefailure", phase == .needsAttention {
@@ -2967,82 +2967,6 @@ final class AgentMonitor: ObservableObject {
 
     private func eventMaxAge(for phase: AgentPhase) -> TimeInterval {
         SessionRetentionPolicy.maxAge(for: phase)
-    }
-
-    private func normalizeFamily(_ raw: String?) -> AgentFamily? {
-        guard let raw else { return nil }
-        let value = raw.lowercased()
-        if value.contains("claude_science") || value.contains("claudescience") || value.contains("claude science") || value.contains("operon") {
-            return .claudeScience
-        }
-        if value.contains("codex") { return .codex }
-        if value.contains("claude") { return .claude }
-        return nil
-    }
-
-    private func normalizeSurface(_ raw: String?) -> AgentSurface? {
-        guard let raw else { return .cli }
-        let value = raw.lowercased()
-        if value.contains("app") || value.contains("desktop") { return .app }
-        if value.contains("runtime") || value.contains("server") || value.contains("service") || value.contains("kernel") { return .runtime }
-        if value.contains("cli") || value.contains("terminal") || value.contains("code") { return .cli }
-        return .cli
-    }
-
-    private func normalizePhase(_ raw: String?) -> AgentPhase? {
-        guard let raw else { return nil }
-        switch raw.lowercased() {
-        case "needs_attention", "needsattention", "attention", "approval", "permission", "input_required", "inputrequired", "blocked", "human":
-            return .needsAttention
-        case "working", "running", "active", "start", "started", "progress", "busy":
-            return .working
-        case "thinking", "think":
-            return .thinking
-        case "queued", "todo", "pending", "waiting":
-            return .queued
-        case "done", "complete", "completed", "success", "finished", "finish":
-            return .done
-        case "error", "failed", "failure":
-            return .error
-        case "online":
-            return .online
-        case "available", "installed":
-            return .available
-        case "idle":
-            return .idle
-        case "offline", "stopped":
-            return .offline
-        default:
-            return nil
-        }
-    }
-
-    private func normalizeEventPhase(_ event: AgentEvent) -> AgentPhase? {
-        let rawEvent = (event.title ?? "") + " " + (event.message ?? "")
-        let hookEvent = normalizeHookEventName(event)
-        if hookEvent == "stop" || hookEvent == "sessionend" || hookEvent == "postinvocation" || hookEvent == "subagentstop" {
-            return .idle
-        }
-        if hookEvent == "userpromptsubmit" {
-            return .queued
-        }
-        if hookEvent == "permissionrequest" || hookEvent == "elicitation" {
-            return .needsAttention
-        }
-        if hookEvent == "posttoolusefailure" {
-            return .needsAttention
-        }
-        if rawEvent.contains("本轮结束") || rawEvent.contains("子任务结束") {
-            return .idle
-        }
-        return normalizePhase(event.phase ?? event.status)
-    }
-
-    private func normalizeHookEventName(_ event: AgentEvent) -> String {
-        (event.event ?? "")
-            .lowercased()
-            .replacingOccurrences(of: "_", with: "")
-            .replacingOccurrences(of: "-", with: "")
     }
 
     private func readClaudeTaskSummary() -> ClaudeTaskSummary {
@@ -4492,27 +4416,16 @@ struct ActivityBars: View {
 }
 
 enum IslandPanelSizing {
-    static let screenInset: CGFloat = 16
-    static let topGap: CGFloat = 4
-    private static let collapsedHeight: CGFloat = 58
-    private static let expandedHeight: CGFloat = 326
+    static let screenInset = PanelGeometryPolicy.screenInset
+    static let topGap = PanelGeometryPolicy.topGap
 
     static func size(expanded: Bool, on screen: NSScreen?) -> NSSize {
         let preferredWidth = CGFloat(expanded ? AgentSettingsStore.workingWidth : AgentSettingsStore.idleWidth)
-        guard let screen else {
-            return NSSize(width: preferredWidth, height: expanded ? expandedHeight : collapsedHeight)
-        }
-
-        let visible = screen.visibleFrame
-        let maxWidth = max(280, visible.width - screenInset * 2)
-        let minWidth = min(maxWidth, expanded ? 420 : 340)
-        let width = max(minWidth, min(preferredWidth, maxWidth))
-
-        let desiredHeight = expanded ? expandedHeight : collapsedHeight
-        let maxHeight = max(collapsedHeight, visible.height - screenInset * 2)
-        let height = min(desiredHeight, maxHeight)
-
-        return NSSize(width: width, height: height)
+        return PanelGeometryPolicy.islandSize(
+            expanded: expanded,
+            preferredWidth: preferredWidth,
+            visibleFrame: screen?.visibleFrame
+        )
     }
 }
 
@@ -4539,38 +4452,22 @@ enum NotchPlacement {
     }
 
     static func notchCenterX(on screen: NSScreen) -> CGFloat {
-        guard let leftArea = screen.auxiliaryTopLeftArea,
-              let rightArea = screen.auxiliaryTopRightArea,
-              !leftArea.isEmpty, !rightArea.isEmpty else {
-            return round(screen.frame.midX)
-        }
-
-        let mid = (leftArea.maxX + rightArea.minX) / 2
-        if mid < screen.frame.minX || mid > screen.frame.maxX {
-            return round(screen.frame.minX + mid)
-        }
-
-        return round(mid)
+        PanelGeometryPolicy.notchCenterX(
+            screenFrame: screen.frame,
+            auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+            auxiliaryTopRightArea: screen.auxiliaryTopRightArea
+        )
     }
 
     static func frame(for panelSize: NSSize, on screen: NSScreen) -> NSRect {
-        let centerX = notchCenterX(on: screen)
-        let visible = screen.visibleFrame
-        let desiredX = centerX - panelSize.width / 2 + horizontalOffset
-        let minX = visible.minX + IslandPanelSizing.screenInset
-        let maxX = visible.maxX - panelSize.width - IslandPanelSizing.screenInset
-        let x: CGFloat
-        if maxX >= minX {
-            x = min(max(desiredX, minX), maxX)
-        } else {
-            x = visible.midX - panelSize.width / 2
-        }
-
-        let preferredY = visible.maxY - panelSize.height - IslandPanelSizing.topGap
-        let minY = visible.minY + IslandPanelSizing.screenInset
-        let y = max(preferredY, minY)
-
-        return NSRect(origin: NSPoint(x: x, y: y), size: panelSize)
+        PanelGeometryPolicy.notchFrame(
+            panelSize: panelSize,
+            screenFrame: screen.frame,
+            visibleFrame: screen.visibleFrame,
+            auxiliaryTopLeftArea: screen.auxiliaryTopLeftArea,
+            auxiliaryTopRightArea: screen.auxiliaryTopRightArea,
+            horizontalOffset: horizontalOffset
+        )
     }
 }
 
@@ -4702,6 +4599,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         islandLog("app started")
+
+        if !OnboardingChecklistStore.shared.hasSeenChecklist {
+            DispatchQueue.main.async { [weak self] in
+                self?.showSettings()
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

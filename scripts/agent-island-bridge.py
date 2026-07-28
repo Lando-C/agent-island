@@ -28,6 +28,8 @@ from typing import Any
 EVENTS_PATH = Path.home() / ".agent-island" / "events.jsonl"
 LOG_PATH = Path.home() / ".agent-island" / "bridge.log"
 AUTO_APPROVAL_PATH = Path.home() / ".agent-island" / "auto-approval.json"
+DATA_RETENTION_PATH = Path.home() / ".agent-island" / "data-retention.json"
+EVENTS_PRUNE_MARKER_PATH = Path.home() / ".agent-island" / "events-pruned-at"
 HOOK_SOCKET_PATH = Path.home() / ".agent-island" / "hook.sock"
 HOOK_CONNECT_TIMEOUT_SECONDS = 0.4
 
@@ -808,13 +810,43 @@ def write_event(source: str, phase: str, title: str, message: str, payload: dict
 
 def prune_events(max_lines: int = 2000, retain_lines: int = 1500) -> None:
     try:
-        if EVENTS_PATH.stat().st_size < 1_000_000:
+        now = time.time()
+        try:
+            last_pruned_at = float(EVENTS_PRUNE_MARKER_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            last_pruned_at = 0
+        if EVENTS_PATH.stat().st_size < 1_000_000 and now - last_pruned_at < 60 * 60:
             return
         lines = EVENTS_PATH.read_text(encoding="utf-8").splitlines()
+        retention_days = 30
+        try:
+            raw_policy = json.loads(DATA_RETENTION_PATH.read_text(encoding="utf-8"))
+            retention_days = {
+                "7_days": 7,
+                "30_days": 30,
+                "90_days": 90,
+            }.get(str(raw_policy.get("eventLog") or ""), 30)
+        except Exception:
+            pass
+        cutoff = now - (retention_days * 24 * 60 * 60)
+        retained: list[str] = []
+        for line in lines:
+            try:
+                event = json.loads(line)
+                if float(event.get("ts") or 0) >= cutoff:
+                    retained.append(line)
+            except Exception:
+                # Malformed local projection rows have no retention value.
+                continue
+        lines = retained
         if len(lines) > max_lines:
             # Leave headroom so an active session does not rewrite the whole
             # event log after every single hook event.
-            EVENTS_PATH.write_text("\n".join(lines[-retain_lines:]) + "\n", encoding="utf-8")
+            lines = lines[-retain_lines:]
+        EVENTS_PATH.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
+        EVENTS_PATH.chmod(0o600)
+        EVENTS_PRUNE_MARKER_PATH.write_text(str(now), encoding="utf-8")
+        EVENTS_PRUNE_MARKER_PATH.chmod(0o600)
     except Exception as exc:
         log(f"event prune failed: {exc}")
 

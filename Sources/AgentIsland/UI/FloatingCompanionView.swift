@@ -15,7 +15,7 @@ struct FloatingCompanionView: View {
     private let ticker = Timer.publish(every: 0.72, on: .main, in: .common).autoconnect()
 
     static func panelSize(expanded: Bool) -> NSSize {
-        expanded ? NSSize(width: 292, height: 154) : NSSize(width: 154, height: 64)
+        PanelGeometryPolicy.floatingSize(expanded: expanded)
     }
 
     var body: some View {

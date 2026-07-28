@@ -85,6 +85,11 @@ The goal is not to show that an app is online. The goal is to answer:
 - Low-frequency activity motion preserves visible working feedback without
   permanent 60 fps redraws, respects macOS Reduce Motion, and has optional
   local system-sound alerts for start, completion, and human attention.
+  Each event can use a separate sound, with quiet hours and burst/repeat
+  throttling.
+- The detached companion uses its own family/state/session hierarchy, distinct
+  family glyphs, reducer-driven semantic tones, and a visible return-to-notch
+  action rather than resizing the notch panel.
 - In-island allow/deny for Claude Code `PermissionRequest` hooks.
 - `request_user_input` / elicitation events are captured as structured pending
   requests. Verified Claude hook and Codex app-server schemas are written back
@@ -343,10 +348,9 @@ Next priority is not a UI rewrite. The next product work should be:
 2. More exact existing-window focusing for Warp, kitty, and Kaku.
 3. Add app/web conversation transports where the local client exposes a safe
    event API; avoid screen-scraping as a source of truth.
-4. Expand exact existing-window focusing for Warp, kitty, and Kaku.
-5. Publish the rendered Cask into the Homebrew tap after the first notarized
+4. Publish the rendered Cask into the Homebrew tap after the first notarized
    release is signed.
-6. Extend the compact companion into per-engine configurable mascots without
+5. Extend the compact companion into per-engine configurable mascots without
    weakening the status-first information design.
 
 ## Browser Web Bridge

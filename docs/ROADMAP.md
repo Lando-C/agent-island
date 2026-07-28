@@ -102,15 +102,19 @@ Implemented:
 - Detachable floating companion with long-press/downward-drag, per-display
   restoration, status bubble, and right-click return to the notch.
 - Optional local sound alerts for start, completion, and human attention.
+- Per-event system sound selection, per-event enablement, optional cross-midnight
+  quiet hours, global burst throttling, and same-signal repeat suppression.
+- A distinct compact companion hierarchy driven by the same primary session:
+  provider identity, semantic state, current-session card, Reduce Motion aware
+  ambient motion, and visible/keyboard return-to-notch controls.
 - Deterministic geometry fixtures for representative 13/14/16-inch notch,
   non-notch, compact, negative-coordinate external, display-removal, and
   detached companion bounds.
 
 Still required:
 
-- Per-engine mascot selection and a compact companion visual system that is not
-  merely a resized notch panel.
-- Quiet hours, per-event sound selection, and notification throttling controls.
+- User-selectable mascot themes/assets per engine; the current compact companion
+  provides distinct built-in family glyphs without external artwork.
 - Pixel-level screenshot tests for notch, non-notch, and external displays;
   the current geometry fixtures do not claim rendered-pixel coverage.
 

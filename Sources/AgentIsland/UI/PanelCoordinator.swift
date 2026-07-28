@@ -145,7 +145,8 @@ final class PanelCoordinator: NSObject {
                 viewModel: viewModel,
                 onBubbleChange: { [weak self] expanded in self?.setExpanded(expanded) },
                 onOpen: { snapshot in AgentLauncher.focus(snapshot) },
-                onDetails: { [weak self] snapshot in self?.onSnapshotDetails(snapshot) }
+                onDetails: { [weak self] snapshot in self?.onSnapshotDetails(snapshot) },
+                onReturnToNotch: { [weak self] in self?.returnToNotch() }
             ))
         } else {
             root = AnyView(IslandView(
@@ -205,7 +206,7 @@ final class PanelCoordinator: NSObject {
         } else {
             frame = NotchPlacement.frame(for: size, on: screen)
         }
-        if animate {
+        if animate && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             NSAnimationContext.runAnimationGroup { context in
                 context.duration = 0.22
                 context.allowsImplicitAnimation = true

@@ -8,8 +8,8 @@ Agent Island is a native Swift macOS app plus small local scripts.
 | --- | --- | --- |
 | App shell | `Sources/AgentIsland/main.swift` | menu-bar lifecycle, agent monitor, app/browser probes |
 | Panel coordination | `Sources/AgentIsland/UI/PanelCoordinator.swift`, `PanelGeometryPolicy.swift` | notch/floating root view, deterministic multi-display geometry and screen restoration, window lifecycle |
-| UI | `Sources/AgentIsland/UI/` | island rows, expansion controller, detached companion, settings, chat windows |
-| Models | `Sources/AgentIsland/Models/` | jump targets, Codex broker thread model, transport health |
+| UI | `Sources/AgentIsland/UI/` | island rows, expansion controller, detached companion and its pure visual policy, settings, chat windows |
+| Models | `Sources/AgentIsland/Models/AgentModels.swift`, `AgentText.swift`, `Sources/AgentIsland/Models/` | Foundation-only agent family/surface/phase, snapshots, provider events, rollups and text normalization, plus jump targets, Codex broker thread model, transport health |
 | State | `Sources/AgentIsland/State/` | hook event reducer, session rollups, display mode, island presentation model |
 | Event normalization | `Sources/AgentIsland/Services/Events/AgentEventNormalizer.swift` | pure provider vocabulary mapping for family, surface, phase, and hook lifecycle names |
 | Focus | `Sources/AgentIsland/Services/Focus/` | terminal/tmux/app focusing and PID/TTY/pane inspection |

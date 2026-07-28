@@ -903,3 +903,63 @@ Codex broker 边界：
   safe area。
 - `main.swift` 仍包含 AgentMonitor、大量探针和主视图；本轮只完成一块低风险
   事件归一化拆分。
+
+## 2026-07-28 Iteration 19 - Sound policy, compact companion, and core model extraction
+
+目标：
+
+- 补齐 quiet hours、按事件声音和节流，避免多会话同时变化造成通知噪声。
+- 让 detached companion 拥有独立的信息层级，而不是缩小版 notch panel。
+- 将稳定核心模型从 `main.swift` 迁到明确的 Models 边界。
+
+声音策略：
+
+- 新增纯 `SoundNotificationPolicy`；总开关继续默认关闭。
+- 开始、完成、需处理/异常分别启停，开始默认关闭，完成和需处理默认开启。
+- 每类事件可独立选择 Submarine、Glass、Basso、Ping 或 Pop，旧版默认声音
+  映射保持不变。
+- 支持跨午夜 quiet hours，默认配置为 22:00–08:00 但不自动启用；开始与
+  结束相同表示全天静默。
+- 所有会话共享 1/3/5/10 秒最小间隔，同一 session/state signal 30 秒内不
+  重复播放；历史 key 有界清理。
+- UserDefaults 兼容旧版仅有 master switch 的数据，并为新增字段使用保守默认。
+
+Compact companion：
+
+- 新增 `CompanionVisualPolicy`，为 Codex、Claude、Claude Science、ChatGPT
+  提供独立内置 glyph/palette，并为所有 phase 提供 tone、motion 和摘要。
+- 浮窗改为 provider identity、semantic state、session card 三层紧凑结构，
+  继续只读取 `IslandViewModel.primarySnapshot`，没有第二套状态机。
+- working/thinking 才允许低频 breathe；Reduce Motion 下不执行 ambient
+  animation。
+- 新增可见返回刘海按钮和 `⌥⌘N`，保留右键返回、Escape 收起、跳转和详情。
+- 尺寸更新为 196×68 / 310×178，继续使用统一 geometry clamp。
+
+核心模型抽离：
+
+- 新增 Foundation-only 的 `Models/AgentModels.swift` 和 `AgentText.swift`，
+  迁出 AgentFamily、AgentSurface、
+  AgentPhase、AgentSnapshot、AgentEvent、JSONL decoder、ConversationInfo、
+  AgentEventRollup、文本归一化和 control notifications；颜色扩展留在 UI 层。
+- 类型定义保持唯一，现有 reducer、retention、event decoder 测试继续直接
+  覆盖迁移后的生产类型。
+- `main.swift` 从 4957 行降到 4588 行；相比 Iteration 17 前的 5054 行已
+  减少 466 行。
+
+验证：
+
+- macOS 15.4 SDK 下 production App、全部 XCTest 测试 target 编译和
+  Release 构建通过。
+- 新增 sound policy/settings migration 和 companion visual policy 测试。
+- Python、Browser Bridge、Shell、installer、session reducer、expansion
+  controller 验证通过。
+- 本机仅有 Command Line Tools；真实 XCTest 继续由 GitHub Actions macOS
+  runner 执行。
+
+遗留边界：
+
+- 当前 companion 使用无版权风险的内置 SF Symbols；用户可选的 mascot
+  主题/资产仍未实现。
+- 声音提醒是本地系统声音，不等同于 macOS Notification Center 推送。
+- `main.swift` 仍拥有 AgentMonitor、AgentLauncher、主 Island SwiftUI 和
+  AppDelegate，后续继续按 provider probes 与 presentation 边界拆分。

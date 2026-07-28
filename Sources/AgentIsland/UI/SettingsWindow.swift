@@ -96,7 +96,7 @@ struct AgentSettingsView: View {
     @State private var launchStatus = LaunchAtLoginController.statusText
     @State private var smartSuppression = SmartSuppression.isEnabled
     @State private var floatingMode = IslandDisplayModeStore.mode == .floating
-    @State private var soundEnabled = AgentIslandSoundSettings.enabled
+    @State private var soundPreferences = AgentIslandSoundSettings.preferences
     @State private var settingsMessage = ""
     @State private var pendingCleanupScope: AgentIslandOwnedDataScope?
 
@@ -292,8 +292,8 @@ struct AgentSettingsView: View {
                         IslandDisplayModeStore.mode = value ? .floating : .notch
                         NotificationCenter.default.post(name: AgentIslandSettingsKeys.settingsChanged, object: nil)
                     }
-                roadmapLine("动态吉祥物", "每个引擎支持 idle / working / warning 三态。")
-                roadmapLine("声音提示", "开始、完成、需要审批、异常四类声音，默认关闭。")
+                roadmapLine("紧凑伴侣", "已按引擎和状态区分内置视觉；用户可选主题资产仍在路线中。")
+                roadmapLine("声音提示", "开始、完成、需处理/异常可分别启停和选声；总开关默认关闭。")
             }
         }
     }
@@ -372,12 +372,83 @@ struct AgentSettingsView: View {
                     .onChange(of: smartSuppression) { value in
                         SmartSuppression.isEnabled = value
                     }
-                Toggle("声音提醒", isOn: $soundEnabled)
-                    .help("默认关闭。开始、完成和需要处理分别使用系统内置声音；不会上传任何会话内容。")
-                    .onChange(of: soundEnabled) { value in
-                        AgentIslandSoundSettings.enabled = value
+                Toggle("声音提醒", isOn: $soundPreferences.enabled)
+                    .help("默认关闭。只播放系统内置声音，不会上传任何会话内容。")
+                VStack(alignment: .leading, spacing: 8) {
+                    soundEventRow(
+                        "开始工作",
+                        enabled: $soundPreferences.startedEnabled,
+                        sound: $soundPreferences.startedSound
+                    )
+                    soundEventRow(
+                        "任务完成",
+                        enabled: $soundPreferences.completedEnabled,
+                        sound: $soundPreferences.completedSound
+                    )
+                    soundEventRow(
+                        "需要处理或出错",
+                        enabled: $soundPreferences.needsAttentionEnabled,
+                        sound: $soundPreferences.needsAttentionSound
+                    )
+                }
+                .padding(.leading, 18)
+                .disabled(!soundPreferences.enabled)
+
+                Toggle("启用静默时段", isOn: $soundPreferences.quietHoursEnabled)
+                    .disabled(!soundPreferences.enabled)
+                HStack {
+                    Text("从")
+                    Picker("", selection: $soundPreferences.quietHoursStart) {
+                        ForEach(0..<24, id: \.self) { hour in
+                            Text(String(format: "%02d:00", hour)).tag(hour)
+                        }
                     }
+                    .labelsHidden()
+                    Text("到")
+                    Picker("", selection: $soundPreferences.quietHoursEnd) {
+                        ForEach(0..<24, id: \.self) { hour in
+                            Text(String(format: "%02d:00", hour)).tag(hour)
+                        }
+                    }
+                    .labelsHidden()
+                    Spacer()
+                }
+                .disabled(!soundPreferences.enabled || !soundPreferences.quietHoursEnabled)
+                .help("开始与结束相同表示全天静默。")
+
+                Picker("提醒最小间隔", selection: $soundPreferences.minimumInterval) {
+                    Text("1 秒").tag(TimeInterval(1))
+                    Text("3 秒").tag(TimeInterval(3))
+                    Text("5 秒").tag(TimeInterval(5))
+                    Text("10 秒").tag(TimeInterval(10))
+                }
+                .disabled(!soundPreferences.enabled)
+                Text("同一会话状态 30 秒内不重复播放；多个会话同时变化时也会遵守最小间隔。")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
             }
+            .onChange(of: soundPreferences) { value in
+                AgentIslandSoundSettings.preferences = value
+            }
+        }
+    }
+
+    private func soundEventRow(
+        _ title: String,
+        enabled: Binding<Bool>,
+        sound: Binding<AgentIslandSoundChoice>
+    ) -> some View {
+        HStack {
+            Toggle(title, isOn: enabled)
+            Spacer(minLength: 8)
+            Picker("声音", selection: sound) {
+                ForEach(AgentIslandSoundChoice.allCases) { choice in
+                    Text(choice.label).tag(choice)
+                }
+            }
+            .labelsHidden()
+            .frame(width: 110)
+            .disabled(!enabled.wrappedValue)
         }
     }
 

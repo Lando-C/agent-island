@@ -23,339 +23,6 @@ func islandLog(_ message: String) {
     }
 }
 
-enum AgentFamily: String, Codable, CaseIterable {
-    case codex
-    case claude
-    case claudeScience = "claude_science"
-    case chatgpt
-
-    var displayName: String {
-        switch self {
-        case .codex: return "Codex"
-        case .claude: return "Claude"
-        case .claudeScience: return "Claude Science"
-        case .chatgpt: return "ChatGPT"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .codex: return Color(red: 0.18, green: 0.78, blue: 0.47)
-        case .claude: return Color(red: 0.93, green: 0.55, blue: 0.22)
-        case .claudeScience: return Color(red: 0.37, green: 0.68, blue: 1.0)
-        case .chatgpt: return Color(red: 0.10, green: 0.74, blue: 0.60)
-        }
-    }
-}
-
-enum AgentSurface: String, Codable, CaseIterable {
-    case app
-    case cli
-    case runtime
-    case web
-
-    var displayName: String {
-        switch self {
-        case .app: return "App"
-        case .cli: return "CLI"
-        case .runtime: return "Runtime"
-        case .web: return "Web"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .app: return "macwindow"
-        case .cli: return "terminal"
-        case .runtime: return "cpu"
-        case .web: return "globe"
-        }
-    }
-}
-
-enum AgentPhase: String, Codable {
-    case needsAttention
-    case working
-    case thinking
-    case queued
-    case done
-    case error
-    case online
-    case idle
-    case available
-    case offline
-
-    var label: String {
-        switch self {
-        case .needsAttention: return "需处理"
-        case .working: return "工作中"
-        case .thinking: return "思考中"
-        case .queued: return "待推进"
-        case .done: return "已完成"
-        case .error: return "异常"
-        case .online: return "在线"
-        case .idle: return "待命"
-        case .available: return "已安装"
-        case .offline: return "离线"
-        }
-    }
-
-    var rank: Int {
-        switch self {
-        case .needsAttention: return 0
-        case .error: return 1
-        case .working: return 2
-        case .thinking: return 3
-        case .queued: return 4
-        case .done: return 5
-        case .online: return 6
-        case .idle: return 7
-        case .available: return 8
-        case .offline: return 9
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .needsAttention: return "person.crop.circle.badge.exclamationmark"
-        case .working: return "waveform"
-        case .thinking: return "brain.head.profile"
-        case .queued: return "arrow.forward.circle"
-        case .done: return "checkmark"
-        case .error: return "exclamationmark"
-        case .online: return "power"
-        case .idle: return "pause"
-        case .available: return "shippingbox"
-        case .offline: return "minus"
-        }
-    }
-}
-
-enum AgentIslandControlKeys {
-    static let collapseRequested = Notification.Name("AgentIslandCollapseRequested")
-    static let toggleRequested = Notification.Name("AgentIslandToggleRequested")
-}
-
-struct AgentSnapshot: Identifiable, Equatable {
-    var family: AgentFamily
-    var surface: AgentSurface
-    var sessionID: String?
-    var phase: AgentPhase
-    var title: String
-    var detail: String
-    var jumpTarget: JumpTarget?
-    var targetPID: Int?
-    var requestID: String?
-    var toolInputSummary: String?
-    var toolRisk: String?
-    var toolRiskReason: String?
-    var autoApprovalEligible: Bool?
-    var pidCount: Int
-    var pendingCount: Int
-    var blockedCount: Int
-    var runningCount: Int
-    var completedCount: Int
-    var lastUpdated: Date?
-    var evidence: StatusEvidence
-
-    var surfaceID: String { "\(family.rawValue)-\(surface.rawValue)" }
-    var id: String {
-        guard let sessionID, !sessionID.isEmpty else { return surfaceID }
-        return "\(surfaceID)-\(sessionID)"
-    }
-
-    var hasQuickActions: Bool {
-        switch phase {
-        case .needsAttention, .queued, .done, .error:
-            return true
-        case .working, .thinking, .online, .idle, .available, .offline:
-            return false
-        }
-    }
-
-    func isDisplayEquivalent(to other: AgentSnapshot) -> Bool {
-        var lhs = self
-        var rhs = other
-        lhs.lastUpdated = nil
-        rhs.lastUpdated = nil
-        return lhs == rhs
-    }
-
-    static func empty(_ family: AgentFamily, _ surface: AgentSurface) -> AgentSnapshot {
-        AgentSnapshot(
-            family: family,
-            surface: surface,
-            sessionID: nil,
-            phase: .offline,
-            title: "\(family.displayName) \(surface.displayName)",
-            detail: "未检测到",
-            jumpTarget: nil,
-            targetPID: nil,
-            requestID: nil,
-            toolInputSummary: nil,
-            toolRisk: nil,
-            toolRiskReason: nil,
-            autoApprovalEligible: nil,
-            pidCount: 0,
-            pendingCount: 0,
-            blockedCount: 0,
-            runningCount: 0,
-            completedCount: 0,
-            lastUpdated: nil,
-            evidence: .heuristic
-        )
-    }
-}
-
-struct AgentEvent: Decodable {
-    var agent: String?
-    var family: String?
-    var surface: String?
-    var channel: String?
-    var status: String?
-    var phase: String?
-    var title: String?
-    var message: String?
-    var session: String?
-    var tool: String?
-    var event: String?
-    var pid: Int?
-    var cwd: String?
-    var terminalApp: String?
-    var terminalBundleID: String?
-    var terminalTTY: String?
-    var terminalWindowID: String?
-    var terminalTabIndex: String?
-    var terminalSessionID: String?
-    var terminalTmuxPane: String?
-    var terminalTmuxSocket: String?
-    var terminalTmuxClient: String?
-    var rawSession: String?
-    var primarySession: String?
-    var parentSession: String?
-    var transcriptPath: String?
-    var requestID: String?
-    var toolInputSummary: String?
-    var toolRisk: String?
-    var toolRiskReason: String?
-    var autoApprovalEligible: Bool?
-    var origin: String?
-    var ts: Double?
-
-    private enum CodingKeys: String, CodingKey {
-        case agent, family, surface, channel, status, phase, title, message, session, tool, event, pid, cwd, ts, origin
-        case terminalApp = "terminal_app"
-        case terminalBundleID = "terminal_bundle_id"
-        case terminalTTY = "terminal_tty"
-        case terminalWindowID = "terminal_window_id"
-        case terminalTabIndex = "terminal_tab_index"
-        case terminalSessionID = "terminal_session_id"
-        case terminalTmuxPane = "terminal_tmux_pane"
-        case terminalTmuxSocket = "terminal_tmux_socket"
-        case terminalTmuxClient = "terminal_tmux_client"
-        case rawSession = "raw_session"
-        case primarySession = "primary_session"
-        case parentSession = "parent_session"
-        case transcriptPath = "transcript_path"
-        case requestID = "request_id"
-        case toolInputSummary = "tool_input_summary"
-        case toolRisk = "tool_risk"
-        case toolRiskReason = "tool_risk_reason"
-        case autoApprovalEligible = "auto_approval_eligible"
-    }
-}
-
-enum AgentEventLogDecoder {
-    static func decodeChunk(_ text: String) -> (events: [AgentEvent], fragment: String) {
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: false)
-        let fragment: String
-        if text.hasSuffix("\n") {
-            fragment = ""
-        } else {
-            fragment = lines.popLast().map(String.init) ?? ""
-        }
-
-        let decoder = JSONDecoder()
-        let events = lines.compactMap { line -> AgentEvent? in
-            guard !line.isEmpty,
-                  let data = String(line).data(using: .utf8) else {
-                return nil
-            }
-            return try? decoder.decode(AgentEvent.self, from: data)
-        }
-        return (events, fragment)
-    }
-}
-
-struct ConversationInfo {
-    var title: String
-    var workspace: String?
-    var preview: String?
-
-    var shortTitle: String {
-        AgentText.compact(title, limit: 34)
-    }
-
-    var workspaceName: String? {
-        guard let workspace, !workspace.isEmpty else { return nil }
-        return URL(fileURLWithPath: workspace).lastPathComponent
-    }
-}
-
-struct AgentEventRollup {
-    var family: AgentFamily?
-    var surface: AgentSurface?
-    var session: String?
-    var displayEvent: AgentEvent?
-    var displayPhase: AgentPhase?
-    var displayTs: Double = 0
-    var workingCount = 0
-    var thinkingCount = 0
-    var attentionCount = 0
-    var queuedCount = 0
-    var doneCount = 0
-
-    mutating func observe(event: AgentEvent, family: AgentFamily, surface: AgentSurface, session: String, phase: AgentPhase, ts: Double) {
-        self.family = family
-        self.surface = surface
-        self.session = session
-
-        switch phase {
-        case .working:
-            workingCount += 1
-        case .thinking:
-            thinkingCount += 1
-        case .needsAttention, .error:
-            attentionCount += 1
-        case .queued:
-            queuedCount += 1
-        case .done:
-            doneCount += 1
-        case .online, .idle, .available, .offline:
-            break
-        }
-
-        let currentRank = displayPhase?.rank ?? Int.max
-        if displayPhase == nil
-            || phase.rank < currentRank
-            || (phase.rank == currentRank && ts >= displayTs) {
-            displayEvent = event
-            displayPhase = phase
-            displayTs = ts
-        }
-    }
-
-    var countSummary: String {
-        var chunks: [String] = []
-        if attentionCount > 0 { chunks.append("\(attentionCount) 需处理") }
-        if workingCount > 0 { chunks.append("\(workingCount) 工作中") }
-        if thinkingCount > 0 { chunks.append("\(thinkingCount) 思考中") }
-        if queuedCount > 0 { chunks.append("\(queuedCount) 待推进") }
-        if doneCount > 0 { chunks.append("\(doneCount) 已完成") }
-        return chunks.joined(separator: " · ")
-    }
-}
-
 private enum AgentSnapshotSummary {
     static func text(for snapshot: AgentSnapshot) -> String {
         var lines: [String] = []
@@ -473,69 +140,6 @@ private enum PendingRequestSummary {
         }
         lines.append("Created: \(ISO8601DateFormatter().string(from: request.createdAt))")
         return lines.joined(separator: "\n")
-    }
-}
-
-enum AgentText {
-    static func singleLine(_ value: String) -> String {
-        value
-            .replacingOccurrences(of: "\n", with: " ")
-            .replacingOccurrences(of: "\t", with: " ")
-            .split(separator: " ")
-            .joined(separator: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    static func compact(_ value: String, limit: Int) -> String {
-        let cleaned = cleanConversationTitle(value)
-        guard cleaned.count > limit else { return cleaned }
-        let end = cleaned.index(cleaned.startIndex, offsetBy: max(1, limit - 1))
-        return String(cleaned[..<end]) + "…"
-    }
-
-    static func meaningfulConversationTitle(_ value: String) -> String? {
-        let cleaned = cleanConversationTitle(value)
-        guard cleaned != "未命名对话", !isInternalTaskText(cleaned) else { return nil }
-        return cleaned
-    }
-
-    static func isInternalTaskText(_ value: String) -> Bool {
-        let text = singleLine(value).lowercased()
-        if text.isEmpty { return true }
-        if text.contains("<task-notification") { return true }
-        if text.contains("<task-id>") { return true }
-        if text.contains("</task-notification>") { return true }
-        if text.contains("<observed_from_primary_session") { return true }
-        if text.contains("</observed_from_primary_session>") { return true }
-        if text.contains("<system-reminder") { return true }
-        if text.contains("hello memory agent") { return true }
-        if text.contains("you are a claude-mem") { return true }
-        if text.contains("memory processing continued") { return true }
-        if text.contains("this session is being continued from a previous conversation") {
-            return true
-        }
-        if text == "null" || text == "none" { return true }
-        return false
-    }
-
-    static func cleanConversationTitle(_ value: String) -> String {
-        var cleaned = singleLine(value)
-        if cleaned.hasPrefix("Codex Companion Task:") {
-            cleaned = cleaned.replacingOccurrences(of: "Codex Companion Task:", with: "Companion review:")
-        }
-        if isInternalTaskText(cleaned) {
-            return "未命名对话"
-        }
-        if cleaned.hasPrefix("<task> Run a stop-gate review") || cleaned.contains("Run a stop-gate review of the previous Claude turn") {
-            return "Stop-gate review"
-        }
-        if cleaned.hasPrefix("<task>") {
-            cleaned = cleaned.replacingOccurrences(of: "<task>", with: "")
-        }
-        cleaned = cleaned
-            .replacingOccurrences(of: "</task>", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return cleaned.isEmpty ? "未命名对话" : cleaned
     }
 }
 
@@ -4632,6 +4236,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Show Island", action: #selector(showIsland), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Hide Island", action: #selector(hideIsland), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Toggle Floating Mode", action: #selector(toggleFloatingMode), keyEquivalent: ""))
+        let returnToNotchItem = NSMenuItem(
+            title: "Return to Notch",
+            action: #selector(returnToNotch),
+            keyEquivalent: "n"
+        )
+        returnToNotchItem.keyEquivalentModifierMask = [.command, .option]
+        menu.addItem(returnToNotchItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Refresh Now", action: #selector(refreshNow), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Open Status Folder", action: #selector(openStatusFolder), keyEquivalent: ""))
@@ -4659,6 +4270,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupKeyMonitors() {
         localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.isCommandOptionN(event) == true {
+                self?.panelCoordinator.returnToNotch()
+                return nil
+            }
             if self?.handleApprovalShortcut(event) == true {
                 return nil
             }
@@ -4673,6 +4288,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return event
         }
         globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if self?.isCommandOptionN(event) == true {
+                self?.panelCoordinator.returnToNotch()
+                return
+            }
             if self?.isOptionN(event) == true {
                 self?.toggleIsland()
                 return
@@ -4687,6 +4306,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         return flags.contains(.option)
             && !flags.contains(.command)
+            && !flags.contains(.control)
+    }
+
+    private func isCommandOptionN(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 45 else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        return flags.contains(.command)
+            && flags.contains(.option)
             && !flags.contains(.control)
     }
 
@@ -4745,6 +4372,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func toggleFloatingMode() {
         panelCoordinator.toggleFloatingMode()
+    }
+
+    @objc private func returnToNotch() {
+        panelCoordinator.returnToNotch()
     }
 
     @objc private func screenChanged() {

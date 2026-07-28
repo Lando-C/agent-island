@@ -84,7 +84,7 @@ enum PanelGeometryPolicy {
     }
 
     static func floatingSize(expanded: Bool) -> NSSize {
-        expanded ? NSSize(width: 292, height: 154) : NSSize(width: 154, height: 64)
+        expanded ? NSSize(width: 310, height: 178) : NSSize(width: 196, height: 68)
     }
 
     static func defaultFloatingFrame(panelSize: NSSize, visibleFrame: NSRect) -> NSRect {

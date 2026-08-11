@@ -159,7 +159,7 @@ bash /tmp/agent-island-install
 Options:
 
 ```bash
-bash /tmp/agent-island-install --version v0.1.0
+bash /tmp/agent-island-install --version v0.2.0
 bash /tmp/agent-island-install --no-hooks
 bash /tmp/agent-island-install --no-open
 ```

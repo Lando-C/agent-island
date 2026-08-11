@@ -9,9 +9,13 @@ Island app running on the same Mac.
 - The app listens only on `127.0.0.1:27583`.
 - Every request requires a random per-install bearer token stored locally at
   `~/.agent-island/web-bridge-token` with owner-only permissions.
-- The extension sends only engine name, page-derived session key, title, phase,
-  a fixed detector summary, and URL path. It does not send page text, prompts,
-  replies, tool input, query parameters, or cookies.
+- The extension reads the conversation title and the presence of a small set of
+  provider UI controls. It sends only engine name, page-derived session key,
+  title, phase, a fixed detector summary, and URL path. It does not read or send
+  prompt/reply bodies, tool input, query parameters, or cookies.
+- The pairing token is stored in that browser profile's local extension storage
+  and sent only to the loopback endpoint. Remove the extension or clear its
+  storage to remove the browser-side copy.
 - Web-page state is a DOM heuristic. Agent Island labels it `网页桥接`; it is
   not equivalent to a CLI Hook or an app transcript confirmation.
 - Extension v0.3 detects only visible stop-generation controls and actual modal

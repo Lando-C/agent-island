@@ -1,5 +1,9 @@
 # Agent Island 迭代记录
 
+> 这是按日期保留的工程历史记录，其中的文件位置、行号和产品状态可能已过时。
+> 当前架构、安全边界和发布状态以根目录 README、`docs/ARCHITECTURE.md`、
+> `SECURITY.md` 与 `docs/RELEASE.md` 为准。
+
 ## 2026-07-09 Iteration 1 - Session reducer / active tool state
 
 目标：

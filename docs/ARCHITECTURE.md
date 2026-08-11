@@ -18,6 +18,8 @@ Agent Island is a native Swift macOS app plus small local scripts.
 | Codex transport | `Sources/AgentIsland/Services/Codex/CodexBrokerClient.swift`, `CodexBrokerEndpoint.swift` | one persistent initialized JSON-RPC connection for requests and threads, with one tested discovery/socket boundary |
 | Hook socket | `Sources/AgentIsland/Services/Hooks/` | local Unix socket and pending hook response lifecycle |
 | Hooks | `scripts/agent-island-bridge.py`, `scripts/install-hooks` | Claude/Codex hook capture and install |
+| Local data boundary | `Sources/AgentIsland/Models/LocalDataSecurity.swift` | owner-only directories/files, secure atomic writes, no-follow reads/appends |
+| Browser bridge | `Sources/AgentIsland/Services/Web/WebBridgeServer.swift`, `extensions/agent-island-web-bridge/` | bounded token-authenticated loopback status transport and DOM detector |
 | Diagnostics | `Sources/AgentIsland/Models/DiagnosticsHistory.swift`, `DiagnosticsHistoryPolicy.swift`, `scripts/agent-island-diagnostics`, `scripts/agent-island-support-bundle` | bounded redacted transport history, composable filtering, second-pass-redacted export, health report, and privacy-safe support artifact |
 
 The packaged `scripts/codex-broker-probe` intentionally keeps a small,
@@ -59,3 +61,7 @@ the local socket returns allow or deny only after the user acts. Unsupported
 question/approval schemas are captured but fall back to the native agent flow
 instead of guessing a response. Question cards may expose choices for copying,
 but they are not marked as answered until a verified write-back path exists.
+Read-only auto-approval targets are resolved against the active workspace and
+fail closed for broad, missing, sensitive, escaping, or unknown paths. Broker
+and hook sockets are local capabilities, so endpoint discovery validates Unix
+socket type, ownership, and parent-directory permissions before connecting.

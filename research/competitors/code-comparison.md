@@ -1,5 +1,10 @@
 # Agent Island 代码级竞品对比
 
+> 历史研究记录（2026-07-09），不代表当前架构或当前分发内容。文中的“复制源码”
+> 是指当时下载到被 `.gitignore` 排除的本地研究区；这些第三方源码快照（包括 GPL
+> 参考）从未提交到本仓库，也不会进入应用包。当前复用范围与许可证归属以
+> [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md) 为准。
+
 日期：2026-07-09  
 复制源码目录：[code-study](research/competitors/code-study)
 
@@ -22,7 +27,8 @@
 | --- | --- | --- | --- |
 | BoringNotch | GPL-3.0 | hover、gesture、screen UUID、notch space、view coordinator | [gpl-reference/BoringNotch](research/competitors/code-study/gpl-reference/BoringNotch) |
 
-GPL 代码已经复制，但只放在 `gpl-reference`，不被 `Package.swift` 引用。要直接进产品，需要接受 GPL 分发义务。
+GPL 快照当时仅下载到被忽略的 `gpl-reference` 本地研究区，未进入 Git 历史或产品。
+任何直接复用都需要单独确认 GPL 分发义务；当前产品没有复制该代码。
 
 ## 当前 Agent Island 代码现状
 

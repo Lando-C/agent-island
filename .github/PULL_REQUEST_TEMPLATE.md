@@ -1,17 +1,21 @@
 ## Summary
 
+## User impact and safety boundary
+
 ## Validation
 
 - [ ] `swift build`
 - [ ] `scripts/test-swift`
-- [ ] `python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe`
-- [ ] `bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install-hooks scripts/agent-island-event scripts/test-swift`
-- [ ] `scripts/validate-session-reducer`
-- [ ] `scripts/validate-expansion-controller`
-- [ ] `scripts/validate-codex-broker-probe`
+- [ ] Python fixture/security tests pass
+- [ ] shell, Python, JSON, and changed JavaScript syntax checks pass
+- [ ] reducer, expansion, and Codex broker validators pass
+- [ ] hook-installer and support-bundle validators pass
+- [ ] packaged app contains license/notice resources when packaging changed
 
 ## Safety
 
 - [ ] Does not make online equal working.
-- [ ] Does not auto-approve dangerous tools.
-- [ ] Documents user-visible behavior changes.
+- [ ] Does not auto-approve dangerous, sensitive, out-of-workspace, or unknown tools.
+- [ ] Preserves unrelated hook configuration and local user data.
+- [ ] Documents user-visible behavior in English and Chinese where applicable.
+- [ ] Adds or updates tests for trust-boundary changes.

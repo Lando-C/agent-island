@@ -2,6 +2,16 @@
 
 [简体中文](README.zh-CN.md)
 
+[![CI](https://github.com/Lando-C/agent-island/actions/workflows/ci.yml/badge.svg)](https://github.com/Lando-C/agent-island/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Lando-C/agent-island/actions/workflows/codeql.yml/badge.svg)](https://github.com/Lando-C/agent-island/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/Lando-C/agent-island?include_prereleases)](https://github.com/Lando-C/agent-island/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+> **Status:** public developer preview. Current GitHub bundles are ad-hoc
+> signed and are not Apple-notarized. A Homebrew tap is not available yet.
+> Review the installer before running it and expect the normal macOS preview
+> first-open confirmation.
+
 Agent Island is a macOS Dynamic Island-style operations panel for AI agents.
 It is built for people running Codex, Claude Code, Claude Desktop, Claude
 Science, ChatGPT, terminal agents, and browser-based AI sessions at the same
@@ -15,6 +25,25 @@ The goal is not to show that an app is online. The goal is to answer:
 - Which one is stuck or failed?
 - Can I jump back to the exact app window, browser tab, terminal tab, or tmux
   pane?
+
+## How It Works
+
+```mermaid
+flowchart LR
+    hooks["Claude/Codex hooks"] --> normalize["Event normalization"]
+    broker["Codex local broker"] --> normalize
+    web["Token-paired web bridge"] --> normalize
+    probes["App/process/TTY probes"] --> normalize
+    normalize --> state["Evidence-aware session state"]
+    state --> island["Notch panel and diagnostics"]
+    island --> focus["Exact target or explicit fallback"]
+    island --> handoff["Human approval/input handoff"]
+```
+
+All runtime paths remain local. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+for component ownership and [`docs/PRIVACY.md`](docs/PRIVACY.md) for the data
+boundary. The latest maintainer audit is
+[`docs/SECURITY_AUDIT_2026-08-12.md`](docs/SECURITY_AUDIT_2026-08-12.md).
 
 ## Current Capabilities
 
@@ -98,12 +127,14 @@ The goal is not to show that an app is online. The goal is to answer:
   requests. Verified Claude hook and Codex app-server schemas are written back
   directly; unsupported transports remain visible but fail closed.
 - Optional auto approval for safe read-only Claude PermissionRequest tools.
-  It is off by default. Dangerous operations are never auto-approved.
+  It is off by default. Eligible reads must remain inside the active workspace
+  and must not target credential/configuration paths. Dangerous, sensitive,
+  out-of-workspace, and unclassified operations are never auto-approved.
 
 ## Quick Install
 
-Requirements: macOS 13 or later. Published release bundles are universal for
-Apple Silicon and Intel Macs.
+Requirements: macOS 13 or later. Preview release bundles are universal for
+Apple Silicon and Intel Macs, but are not yet notarized.
 
 Run the installer in Terminal:
 
@@ -136,11 +167,9 @@ bash /tmp/agent-island-install --no-open
 Re-run the same command to update. The previous app is restored automatically
 if installation fails.
 
-For a notarized stable release distributed through a Homebrew tap:
-
-```bash
-brew install --cask Lando-C/tap/agent-island
-```
+Homebrew distribution is planned only after the first Developer ID-signed,
+notarized stable release. The checked-in Cask is currently a release template,
+not an available tap.
 
 ## Manual Release Install
 
@@ -153,8 +182,9 @@ brew install --cask Lando-C/tap/agent-island
    ```
 
 4. Unzip the archive and move `Agent Island.app` to `/Applications`.
-5. Stable releases are notarized. A developer preview may still require the
-   normal macOS first-open confirmation.
+5. Current developer previews may require the normal macOS first-open
+   confirmation. Future stable releases must be notarized before they are
+   advertised as stable.
 6. In Agent Island, open **Settings > Diagnostics**, then install hooks and
    grant only the permissions needed by the surfaces you use.
 
@@ -265,6 +295,11 @@ Can be auto-approved only when explicitly enabled:
 - `LS`
 - `TodoRead`
 
+Except for `TodoRead`, eligible read targets must resolve inside the active
+workspace. Missing targets, relative-path escapes, the home/root directory,
+`.env`, SSH/cloud/keychain/credential locations, and similar sensitive paths
+always require manual review.
+
 Never auto-approved:
 
 - `Write`
@@ -318,6 +353,10 @@ Create a safe support bundle without event logs or transcripts:
 "/Applications/Agent Island.app/Contents/Resources/scripts/agent-island-support-bundle"
 ```
 
+Support bundles apply a second redaction pass for credentials, tokens, email
+addresses, user/project paths, session identifiers, and non-loopback IP
+addresses. Review any artifact before sharing it.
+
 ## Uninstall
 
 Remove Agent Island's hook entries before deleting the app. Other hooks are
@@ -363,8 +402,9 @@ bundle and is also available in
 [`extensions/agent-island-web-bridge`](extensions/agent-island-web-bridge).
 It supports Chrome and Chromium browsers. Install it unpacked, copy the pairing
 token from **Settings > Diagnostics**, and paste it in the extension options.
-It sends only minimal status metadata to `127.0.0.1`; it never reads or uploads
-page text, prompts, replies, cookies, or credentials. See
+It sends only minimal status metadata to `127.0.0.1`. It reads a conversation
+title and known UI controls, but not prompt/reply bodies, tool input, query
+parameters, cookies, or credentials. See
 [`docs/WEB_BRIDGE.md`](docs/WEB_BRIDGE.md) for the exact steps and trust model.
 
 ## Terminal Focus Matrix
@@ -391,4 +431,17 @@ License notes are in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 ## Privacy
 
 Agent Island stores local status data under `~/.agent-island`. It does not upload
-events, conversations, hook payloads, or diagnostics.
+events, conversations, hook payloads, or diagnostics. The directory is enforced
+as owner-only (`0700`) and Agent Island-owned files as owner-only (`0600`);
+symbolic-link and non-regular-file targets are rejected for sensitive local
+writes. See [`docs/PRIVACY.md`](docs/PRIVACY.md) and [`SECURITY.md`](SECURITY.md).
+
+## Contributing and License
+
+Issues and focused pull requests are welcome. Start with
+[`CONTRIBUTING.md`](CONTRIBUTING.md), and report vulnerabilities through the
+private process in [`SECURITY.md`](SECURITY.md).
+
+Agent Island is MIT-licensed. Adapted Apache-2.0 portions and all required
+notices are documented in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and
+[`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).

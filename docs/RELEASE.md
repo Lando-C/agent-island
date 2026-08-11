@@ -5,6 +5,10 @@ Apple notarization, stapling, and Gatekeeper assessment. Preview releases may be
 ad-hoc signed, but they must be marked as previews and must not be published to a
 Homebrew Cask tap.
 
+The currently published release line is a developer preview. The checked-in Cask
+is a template only; no README or release note may imply that the tap exists until
+the stable gates below have passed.
+
 ## Local stable release
 
 ```bash
@@ -33,6 +37,7 @@ scripts/agent-island-support-bundle --output ~/Desktop
 The support bundle deliberately excludes event logs, transcript files, Hook
 payloads, commands, session IDs, and project paths. It contains only redacted
 diagnostics, macOS metadata, signing/Gatekeeper state, and transport-health data.
+Run `scripts/validate-support-bundle` before every public release.
 
 ## Homebrew
 
@@ -43,3 +48,6 @@ dedicated tap such as `Lando-C/homebrew-tap`, then users can install it with:
 ```bash
 brew install --cask Lando-C/tap/agent-island
 ```
+
+Do not publish that command in installation guidance until the tap and notarized
+artifact have been verified from a clean machine.

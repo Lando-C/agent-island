@@ -16,7 +16,11 @@ Useful local commands:
 swift build
 scripts/validate-session-reducer
 scripts/validate-expansion-controller
+scripts/validate-install-hooks
+scripts/validate-support-bundle
 ```
 
 Do not paste private prompts, credentials, API keys, or sensitive command output
-into public issues.
+into public issues. Use the redacted support-bundle command from the README and
+review the resulting archive before attaching it. Security issues belong in
+GitHub private vulnerability reporting, not a public issue.

@@ -37,7 +37,9 @@ jobs:
           languages: swift
 
       - name: Build
-        run: swift build -c release
+        # CodeQL needs a traced compilation, not release optimization. A debug
+        # build covers the same Swift sources and keeps PR analysis responsive.
+        run: swift build
 
       - name: Analyze
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4

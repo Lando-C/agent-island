@@ -110,18 +110,10 @@ final class DiagnosticsHistoryStore: ObservableObject {
 
     private func persist(_ values: [DiagnosticsHistoryEntry]) {
         do {
-            try FileManager.default.createDirectory(
-                at: outputURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(values).write(to: outputURL, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: outputURL.path
-            )
+            try LocalDataSecurity.writePrivate(encoder.encode(values), to: outputURL)
         } catch {
             islandLog("diagnostics history persist failed error=\(error.localizedDescription)")
         }

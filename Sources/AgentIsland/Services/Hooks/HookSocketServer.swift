@@ -88,10 +88,7 @@ final class HookSocketServer {
         guard serverSocket < 0 else { return }
         do {
             let url = URL(fileURLWithPath: socketPath)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
+            try LocalDataSecurity.ensurePrivateDirectory(at: url.deletingLastPathComponent())
             try removeStaleSocket(at: url)
 
             let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -132,7 +129,12 @@ final class HookSocketServer {
                 close(fd)
                 throw POSIXError(.init(rawValue: bindErrno) ?? .EIO)
             }
-            chmod(socketPath, S_IRUSR | S_IWUSR)
+            guard chmod(socketPath, S_IRUSR | S_IWUSR) == 0 else {
+                let chmodErrno = errno
+                close(fd)
+                unlink(socketPath)
+                throw POSIXError(.init(rawValue: chmodErrno) ?? .EIO)
+            }
 
             guard listen(fd, SOMAXCONN) == 0 else {
                 let error = POSIXError(.init(rawValue: errno) ?? .EIO)
@@ -174,7 +176,8 @@ final class HookSocketServer {
         guard lstat(url.path, &statBuffer) == 0 else {
             throw POSIXError(.init(rawValue: errno) ?? .EIO)
         }
-        guard (statBuffer.st_mode & S_IFMT) == S_IFSOCK else {
+        guard (statBuffer.st_mode & S_IFMT) == S_IFSOCK,
+              statBuffer.st_uid == geteuid() else {
             throw POSIXError(.EEXIST)
         }
         try FileManager.default.removeItem(at: url)
@@ -196,7 +199,10 @@ final class HookSocketServer {
     }
 
     private func configureClient(_ fd: Int32) {
-        var timeout = timeval(tv_sec: 86_400, tv_usec: 0)
+        // A peer must send and half-close one JSON frame promptly. Once the
+        // frame is decoded, the descriptor can remain pending for the user's
+        // decision without another blocking read.
+        var timeout = timeval(tv_sec: 3, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var noSigpipe: Int32 = 1
@@ -257,7 +263,6 @@ final class HookSocketServer {
             if count > 0 {
                 payload.append(buffer, count: count)
                 if payload.count > maxPayloadSize {
-                    close(fd)
                     return nil
                 }
             } else if count == 0 {
@@ -265,7 +270,6 @@ final class HookSocketServer {
             } else if errno == EINTR {
                 continue
             } else {
-                close(fd)
                 return nil
             }
         }

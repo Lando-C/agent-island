@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 set -uo pipefail
+umask 077
 
 REDACTED=0
 if [[ "${1:-}" == "--redacted" ]]; then
@@ -10,6 +11,7 @@ if [[ "${1:-}" == "--redacted" ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REDACTOR="$SCRIPT_DIR/redact-support-text"
 DATA_DIR="$HOME/.agent-island"
 EVENTS="$DATA_DIR/events.jsonl"
 LOG="$DATA_DIR/agent-island.log"
@@ -21,6 +23,9 @@ HOOK_SOCKET="$DATA_DIR/hook.sock"
 WEB_BRIDGE_TOKEN="$DATA_DIR/web-bridge-token"
 WEB_BRIDGE_PORT=27583
 TRANSPORT_HEALTH="$DATA_DIR/transport-health.json"
+DIAG_TMP="$(mktemp -d "${TMPDIR:-/tmp}/agent-island-diagnostics.XXXXXX")"
+cleanup() { rm -rf "$DIAG_TMP"; }
+trap cleanup EXIT
 
 pass_count=0
 warn_count=0
@@ -46,9 +51,11 @@ status() {
 }
 
 redact() {
-  local value="$1"
-  value="${value//$HOME/~}"
-  printf '%s' "$value" | sed -E 's/[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}/<session>/g'
+  if [[ -x "$REDACTOR" ]]; then
+    printf '%s' "$1" | "$REDACTOR"
+  else
+    printf '<redacted: helper unavailable>'
+  fi
 }
 
 section() {
@@ -104,7 +111,11 @@ fi
 
 section "App"
 if pgrep -f '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' >/dev/null 2>&1; then
-  status PASS "Agent Island process" "$(pgrep -fl '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' | head -n 1)"
+  if [[ "$REDACTED" == "1" ]]; then
+    status PASS "Agent Island process" "running"
+  else
+    status PASS "Agent Island process" "$(pgrep -fl '/Applications/Agent Island.app/Contents/MacOS/AgentIsland' | head -n 1)"
+  fi
 else
   status WARN "Agent Island process" "not running from /Applications"
 fi
@@ -208,8 +219,27 @@ for value in values:
     failure = value.get("failure")
     endpoint = value.get("endpoint")
     if redacted:
-        endpoint = endpoint.replace(home, "~") if isinstance(endpoint, str) else endpoint
-        failure = re.sub(r"[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}", "<session>", failure or "")
+        def clean(text):
+            if not isinstance(text, str):
+                return text
+            text = text.replace(home, "~")
+            patterns = (
+                (r"(?i)(https?://)[^\s/@:]+:[^\s/@]+@", r"\1<credentials>@"),
+                (r"(?i)\b(?:authorization\s*:\s*)?(bearer|basic)\s+[^\s,;]+", r"\1 <redacted>"),
+                (r"(?i)\b(api[_-]?key|access[_-]?token|auth[_-]?token|password|secret)\b\s*[:=]\s*[^\s,;]+", r"\1=<redacted>"),
+                (r"\b(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]{16,}\b", "<redacted>"),
+                (r"\bsk-[A-Za-z0-9_-]{16,}\b", "<redacted>"),
+                (r"\b[0-9a-fA-F]{8}-[0-9a-fA-F-]{27,}\b", "<session>"),
+                (r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "<email>"),
+                (r"(?:/Users/[^/\s:;,]+|~)/(?:[^\s:;,]+/?)*", "~/<redacted>"),
+                (r"(?:/private)?/tmp/[^\s:;,]+", "/tmp/<redacted>"),
+                (r"/dev/tty[^\s:;,]+", "/dev/tty<redacted>"),
+            )
+            for pattern, replacement in patterns:
+                text = re.sub(pattern, replacement, text)
+            return text
+        endpoint = clean(endpoint)
+        failure = clean(failure or "")
     detail = f"state={state} protocol={protocol} last_success={last}"
     if endpoint:
         detail += f" endpoint={endpoint}"
@@ -275,8 +305,9 @@ if [[ -x "$PROBE" ]]; then
   broker_output="$("$PROBE" --limit 20 --read-visible-details --read-limit 2 2>&1)"
   broker_rc=$?
   if [[ "$broker_rc" == "0" ]]; then
-    visible="$(python3 - "$broker_output" <<'PY'
+    visible="$(python3 - "$broker_output" "$REDACTED" <<'PY'
 import json, sys
+redacted = sys.argv[2] == "1"
 try:
     data = json.loads(sys.argv[1])
     threads = data.get("threads") or []
@@ -284,14 +315,19 @@ try:
         t for t in threads
         if not t.get("auxiliary") and not t.get("isAuxiliary") and not t.get("is_auxiliary")
     ]
-    print(f"socket={data.get('socket')} threads={len(threads)} visible={len(visible)}")
+    prefix = "" if redacted else f"socket={data.get('socket')} "
+    print(f"{prefix}threads={len(threads)} visible={len(visible)}")
 except Exception:
-    print(sys.argv[1][:240])
+    print("response unavailable" if redacted else sys.argv[1][:240])
 PY
 )"
     status PASS "Codex broker probe" "$visible"
   else
-    status WARN "Codex broker probe" "$(echo "$broker_output" | head -n 1 | cut -c 1-240)"
+    if [[ "$REDACTED" == "1" ]]; then
+      status WARN "Codex broker probe" "probe unavailable exit=$broker_rc"
+    else
+      status WARN "Codex broker probe" "$(echo "$broker_output" | head -n 1 | cut -c 1-240)"
+    fi
   fi
 else
   status WARN "Codex broker probe" "$PROBE missing"
@@ -299,10 +335,10 @@ fi
 
 section "Terminal Jump"
 if tmux_path="$(command_path tmux)"; then
-  if "$tmux_path" list-sessions >/tmp/agent-island-tmux.out 2>/tmp/agent-island-tmux.err; then
-    status PASS "tmux" "$tmux_path sessions=$(wc -l < /tmp/agent-island-tmux.out | tr -d ' ')"
+  if "$tmux_path" list-sessions >"$DIAG_TMP/tmux.out" 2>"$DIAG_TMP/tmux.err"; then
+    status PASS "tmux" "$tmux_path sessions=$(wc -l < "$DIAG_TMP/tmux.out" | tr -d ' ')"
   else
-    status WARN "tmux" "$tmux_path installed, no accessible server ($(head -n 1 /tmp/agent-island-tmux.err 2>/dev/null))"
+    status WARN "tmux" "$tmux_path installed, no accessible server ($(head -n 1 "$DIAG_TMP/tmux.err" 2>/dev/null))"
   fi
 else
   status WARN "tmux" "not installed"

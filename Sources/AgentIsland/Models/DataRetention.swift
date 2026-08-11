@@ -71,17 +71,9 @@ final class DataRetentionStore: ObservableObject {
 
     private func persist() {
         do {
-            try FileManager.default.createDirectory(
-                at: settingsURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(settings).write(to: settingsURL, options: .atomic)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: settingsURL.path
-            )
+            try LocalDataSecurity.writePrivate(encoder.encode(settings), to: settingsURL)
         } catch {
             islandLog("data retention settings persist failed error=\(error.localizedDescription)")
         }
@@ -132,9 +124,7 @@ struct AgentIslandOwnedDataCleaner {
 
     private func replaceWithEmptyFile(_ url: URL) {
         do {
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data().write(to: url, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            try LocalDataSecurity.writePrivate(Data(), to: url)
         } catch {
             islandLog("owned data cleanup failed file=\(url.lastPathComponent) error=\(error.localizedDescription)")
         }

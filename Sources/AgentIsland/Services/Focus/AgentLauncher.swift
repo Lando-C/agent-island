@@ -252,10 +252,7 @@ enum AgentLauncher {
     }
 
     private static func appleScriptStringLiteral(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escaped)\""
+        AppleScriptEscaping.literal(value)
     }
 
     private static func focusHostProcess(startingAt pid: Int?) -> Bool {

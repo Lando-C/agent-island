@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Ling
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VALIDATION_TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agent-island-hooks-test.XXXXXX")"
+cleanup() { rm -rf "$VALIDATION_TEMP_ROOT"; }
+trap cleanup EXIT
+
+TEST_USER_HOME="$VALIDATION_TEMP_ROOT/user"
+mkdir -p "$TEST_USER_HOME/.claude" "$TEST_USER_HOME/.codex"
+
+printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"keep-me"}]}]}}' \
+  > "$TEST_USER_HOME/.claude/settings.json"
+printf '%s\n' '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"keep-me"}]}]}}' \
+  > "$TEST_USER_HOME/.codex/hooks.json"
+printf '%s\n' '[features]' 'hooks_preview = false' > "$TEST_USER_HOME/.codex/config.toml"
+
+AGENT_ISLAND_HOME="$TEST_USER_HOME" \
+AGENT_ISLAND_SKIP_CODEX_FEATURE_COMMAND=1 \
+  "$ROOT/scripts/install-hooks" --all >/dev/null
+
+python3 - "$TEST_USER_HOME" <<'PY'
+import json
+import pathlib
+import sys
+
+home = pathlib.Path(sys.argv[1])
+for relative in (".claude/settings.json", ".codex/hooks.json"):
+    payload = json.loads((home / relative).read_text(encoding="utf-8"))
+    commands = [
+        hook.get("command", "")
+        for entries in payload.get("hooks", {}).values()
+        for entry in entries
+        for hook in entry.get("hooks", [])
+    ]
+    if "keep-me" not in commands or not any("agent-island-bridge.py" in item for item in commands):
+        raise SystemExit(f"hook merge failed for {relative}")
+
+config = (home / ".codex/config.toml").read_text(encoding="utf-8")
+if "hooks_preview = false" not in config or "hooks = true" not in config:
+    raise SystemExit("Codex config update replaced an adjacent hooks key")
+
+for relative in (
+    ".claude/settings.json",
+    ".claude/settings.json.agent-island.bak",
+    ".codex/hooks.json",
+    ".codex/hooks.json.agent-island.bak",
+    ".codex/config.toml",
+    ".codex/config.toml.agent-island.bak",
+):
+    path = home / relative
+    if path.exists() and path.stat().st_mode & 0o777 != 0o600:
+        raise SystemExit(f"hook config is not owner-only: {relative}")
+PY
+
+AGENT_ISLAND_HOME="$TEST_USER_HOME" \
+AGENT_ISLAND_SKIP_CODEX_FEATURE_COMMAND=1 \
+  "$ROOT/scripts/install-hooks" --uninstall >/dev/null
+
+python3 - "$TEST_USER_HOME" <<'PY'
+import json
+import pathlib
+import sys
+
+home = pathlib.Path(sys.argv[1])
+for relative in (".claude/settings.json", ".codex/hooks.json"):
+    payload = json.loads((home / relative).read_text(encoding="utf-8"))
+    commands = [
+        hook.get("command", "")
+        for entries in payload.get("hooks", {}).values()
+        for entry in entries
+        for hook in entry.get("hooks", [])
+    ]
+    if commands != ["keep-me"]:
+        raise SystemExit(f"hook uninstall removed unrelated entries in {relative}")
+PY
+
+cp "$TEST_USER_HOME/.claude/settings.json" "$VALIDATION_TEMP_ROOT/claude-before-invalid-codex.json"
+printf '%s\n' '{invalid-json' > "$TEST_USER_HOME/.codex/hooks.json"
+if AGENT_ISLAND_HOME="$TEST_USER_HOME" \
+   AGENT_ISLAND_SKIP_CODEX_FEATURE_COMMAND=1 \
+   "$ROOT/scripts/install-hooks" --all >/dev/null 2>&1; then
+  echo "invalid Codex hooks JSON passed all-hook preflight" >&2
+  exit 1
+fi
+cmp "$VALIDATION_TEMP_ROOT/claude-before-invalid-codex.json" "$TEST_USER_HOME/.claude/settings.json"
+
+if AGENT_ISLAND_HOME="$TEST_USER_HOME" \
+   AGENT_ISLAND_SKIP_CODEX_FEATURE_COMMAND=1 \
+   "$ROOT/scripts/install-hooks" --codex >/dev/null 2>&1; then
+  echo "invalid Codex hooks JSON was overwritten" >&2
+  exit 1
+fi
+grep -qx '{invalid-json' "$TEST_USER_HOME/.codex/hooks.json"
+
+printf '%s\n' '{invalid-json' > "$TEST_USER_HOME/.claude/settings.json"
+if AGENT_ISLAND_HOME="$TEST_USER_HOME" \
+   AGENT_ISLAND_SKIP_CODEX_FEATURE_COMMAND=1 \
+   "$ROOT/scripts/install-hooks" --claude >/dev/null 2>&1; then
+  echo "invalid Claude settings JSON was overwritten" >&2
+  exit 1
+fi
+grep -qx '{invalid-json' "$TEST_USER_HOME/.claude/settings.json"
+
+EMPTY_USER_HOME="$VALIDATION_TEMP_ROOT/empty-user"
+AGENT_ISLAND_HOME="$EMPTY_USER_HOME" \
+AGENT_ISLAND_SKIP_CODEX_FEATURE_COMMAND=1 \
+  "$ROOT/scripts/install-hooks" --uninstall >/dev/null
+
+echo "OK install-hooks merge, uninstall, and invalid-config safety"

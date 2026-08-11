@@ -1044,11 +1044,10 @@ private enum AutoApprovalStore {
     }
 
     static func save(_ settings: AutoApprovalSettings) {
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(settings) {
-            try? data.write(to: url, options: .atomic)
+            try? LocalDataSecurity.writePrivate(data, to: url)
         }
     }
 }

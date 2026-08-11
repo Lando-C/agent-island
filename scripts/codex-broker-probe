@@ -7,6 +7,7 @@ import glob
 import json
 import os
 import socket
+import stat
 import sys
 import time
 
@@ -34,6 +35,21 @@ def rpc(sock, request_id, method, params=None):
     raise TimeoutError(f"timeout waiting for {method}")
 
 
+def trusted_socket(path):
+    try:
+        socket_stat = os.lstat(path)
+        parent_stat = os.lstat(os.path.dirname(path))
+    except OSError:
+        return False
+    return (
+        stat.S_ISSOCK(socket_stat.st_mode)
+        and socket_stat.st_uid == os.geteuid()
+        and stat.S_ISDIR(parent_stat.st_mode)
+        and parent_stat.st_uid == os.geteuid()
+        and not parent_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    )
+
+
 def discover_sockets():
     tmp = os.environ.get("TMPDIR", "/tmp").rstrip("/")
     candidates = []
@@ -46,14 +62,14 @@ def discover_sockets():
     existing = []
     seen = set()
     for path in candidates:
-        if path in seen or not os.path.exists(path):
+        if path in seen or not trusted_socket(path):
             continue
         seen.add(path)
         try:
-            stat = os.stat(path)
+            socket_stat = os.lstat(path)
         except OSError:
             continue
-        existing.append((stat.st_mtime, path))
+        existing.append((socket_stat.st_mtime, path))
     return [path for _, path in sorted(existing, reverse=True)]
 
 

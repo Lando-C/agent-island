@@ -3,9 +3,12 @@
 # SPDX-License-Identifier: MIT
 
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BRIDGE="$ROOT/scripts/agent-island-bridge.py"
+USER_HOME="${AGENT_ISLAND_HOME:-$HOME}"
+[[ "$USER_HOME" == /* ]] || { echo "AGENT_ISLAND_HOME must be an absolute path" >&2; exit 2; }
 
 install_claude=false
 install_codex=false
@@ -32,6 +35,11 @@ approve or deny actions. Optional auto approval is disabled unless explicitly
 enabled in ~/.agent-island/auto-approval.json, and dangerous tools are never
 auto-approved. --uninstall removes only Agent Island hook entries and preserves
 unrelated hooks.
+
+Environment:
+  AGENT_ISLAND_HOME  Override the user home used for hook configuration.
+  AGENT_ISLAND_SKIP_CODEX_FEATURE_COMMAND=1
+                     Do not invoke the Codex CLI; update config.toml directly.
 USAGE
       exit 0
       ;;
@@ -39,25 +47,47 @@ USAGE
   esac
 done
 
-if ! $uninstall; then
-  chmod +x "$BRIDGE"
+if ! $uninstall && [[ ! -x "$BRIDGE" ]]; then
+  echo "Agent Island hook bridge is missing or not executable: $BRIDGE" >&2
+  exit 1
 fi
 
+preflight_paths=()
+$install_claude && preflight_paths+=("$USER_HOME/.claude/settings.json")
+$install_codex && preflight_paths+=("$USER_HOME/.codex/hooks.json")
+python3 - "${preflight_paths[@]}" <<'PY'
+import json, pathlib, sys
+for raw_path in sys.argv[1:]:
+    path = pathlib.Path(raw_path)
+    if not path.exists():
+        continue
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"cannot update invalid hook JSON {path}: {exc}")
+    if not isinstance(value, dict) or not isinstance(value.get("hooks", {}), dict):
+        raise SystemExit(f"cannot update unsupported hook JSON structure: {path}")
+PY
+
 if $install_claude; then
-  settings="$HOME/.claude/settings.json"
+  settings="$USER_HOME/.claude/settings.json"
   mkdir -p "$(dirname "$settings")"
   if $uninstall && [[ ! -f "$settings" ]]; then
     echo "Claude Code hooks already absent: $settings"
   else
     [[ -f "$settings" ]] || echo '{}' > "$settings"
   cp "$settings" "$settings.agent-island.bak"
+  chmod 600 "$settings.agent-island.bak"
 
   python3 - "$settings" "$BRIDGE" "$uninstall" <<'PY'
-import json, sys
+import json, os, shlex, stat, sys, tempfile
 path, bridge, uninstall = sys.argv[1], sys.argv[2], sys.argv[3] == "true"
-cmd = f'"{bridge}" --source claude'
-with open(path, encoding="utf-8") as fh:
-    data = json.load(fh)
+cmd = f'{shlex.quote(bridge)} --source claude'
+try:
+    with open(path, encoding="utf-8") as fh:
+        data = json.load(fh)
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"cannot update invalid Claude settings JSON: {exc}; restore from {path}.agent-island.bak")
 hooks = data.setdefault("hooks", {})
 lifecycle = {"hooks": [{"type": "command", "command": cmd}]}
 approval = {"hooks": [{"type": "command", "command": cmd, "timeout": 86400}]}
@@ -78,9 +108,13 @@ events = {
 for event, entry in events.items():
     current = hooks.get(event, [])
     if not isinstance(current, list):
-        current = []
+        raise SystemExit(f"cannot update unsupported Claude hook list: {event}")
     cleaned = []
     for item in current:
+        if not isinstance(item, dict) or not isinstance(item.get("hooks", []), list):
+            raise SystemExit(f"cannot update unsupported Claude hook entry: {event}")
+        if not all(isinstance(h, dict) for h in item.get("hooks", [])):
+            raise SystemExit(f"cannot update unsupported Claude hook command: {event}")
         item_hooks = [h for h in item.get("hooks", []) if "agent-island-bridge.py" not in h.get("command", "")]
         if item_hooks:
             next_item = dict(item)
@@ -92,8 +126,21 @@ for event, entry in events.items():
         hooks[event] = cleaned
     else:
         hooks.pop(event, None)
-with open(path, "w", encoding="utf-8") as fh:
-    json.dump(data, fh, indent=2, ensure_ascii=False)
+mode = 0o600
+descriptor, temporary = tempfile.mkstemp(prefix=".agent-island-settings.", dir=os.path.dirname(path), text=True)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
 PY
     if $uninstall; then
       echo "removed Agent Island Claude Code hooks: $settings"
@@ -104,33 +151,41 @@ PY
 fi
 
 if $install_codex; then
-  hooks_file="$HOME/.codex/hooks.json"
-  config_file="$HOME/.codex/config.toml"
+  hooks_file="$USER_HOME/.codex/hooks.json"
+  config_file="$USER_HOME/.codex/config.toml"
   mkdir -p "$(dirname "$hooks_file")"
   if $uninstall && [[ ! -f "$hooks_file" ]]; then
     echo "Codex CLI hooks already absent: $hooks_file"
   else
     [[ -f "$hooks_file" ]] || echo '{"hooks":{}}' > "$hooks_file"
   cp "$hooks_file" "$hooks_file.agent-island.bak"
-  [[ -f "$config_file" ]] && cp "$config_file" "$config_file.agent-island.bak" || true
+  chmod 600 "$hooks_file.agent-island.bak"
+  if [[ -f "$config_file" ]]; then
+    cp "$config_file" "$config_file.agent-island.bak"
+    chmod 600 "$config_file.agent-island.bak"
+  fi
 
   python3 - "$hooks_file" "$BRIDGE" "$uninstall" <<'PY'
-import json, sys
+import json, os, shlex, stat, sys, tempfile
 path, bridge, uninstall = sys.argv[1], sys.argv[2], sys.argv[3] == "true"
-cmd = f'"{bridge}" --source codex'
+cmd = f'{shlex.quote(bridge)} --source codex'
 try:
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
-except Exception:
-    data = {}
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"cannot update invalid Codex hooks JSON: {exc}; restore from {path}.agent-island.bak")
 hooks = data.setdefault("hooks", {})
 events = ["SessionStart", "PreToolUse", "PostToolUse", "Stop", "PermissionRequest"]
 for event in events:
     current = hooks.get(event, [])
     if not isinstance(current, list):
-        current = []
+        raise SystemExit(f"cannot update unsupported Codex hook list: {event}")
     cleaned = []
     for item in current:
+        if not isinstance(item, dict) or not isinstance(item.get("hooks", []), list):
+            raise SystemExit(f"cannot update unsupported Codex hook entry: {event}")
+        if not all(isinstance(h, dict) for h in item.get("hooks", [])):
+            raise SystemExit(f"cannot update unsupported Codex hook command: {event}")
         item_hooks = [h for h in item.get("hooks", []) if "agent-island-bridge.py" not in h.get("command", "")]
         if item_hooks:
             next_item = dict(item)
@@ -145,17 +200,34 @@ for event in events:
         hooks[event] = cleaned
     else:
         hooks.pop(event, None)
-with open(path, "w", encoding="utf-8") as fh:
-    json.dump(data, fh, indent=2, ensure_ascii=False)
+mode = 0o600
+descriptor, temporary = tempfile.mkstemp(prefix=".agent-island-hooks.", dir=os.path.dirname(path), text=True)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
 PY
 
-  if ! $uninstall && command -v codex >/dev/null 2>&1; then
+  codex_hooks_enabled=false
+  if ! $uninstall && [[ "${AGENT_ISLAND_SKIP_CODEX_FEATURE_COMMAND:-0}" != "1" ]] && command -v codex >/dev/null 2>&1; then
     codex features enable hooks >/dev/null 2>&1 || true
+    if codex features list 2>/dev/null | grep -E '^hooks[[:space:]]+' | grep -q 'true'; then
+      codex_hooks_enabled=true
+    fi
   fi
 
-  if ! $uninstall && ! codex features list 2>/dev/null | grep -E '^hooks[[:space:]]+' | grep -q 'true'; then
+  if ! $uninstall && ! $codex_hooks_enabled; then
     python3 - "$config_file" <<'PY'
-import pathlib, sys
+import os, pathlib, re, stat, sys, tempfile
 path = pathlib.Path(sys.argv[1])
 text = path.read_text() if path.exists() else ""
 if "[features]" not in text:
@@ -172,7 +244,7 @@ else:
                 out.append("hooks = true")
             in_features = stripped == "[features]"
             saw_hooks = False
-        if in_features and stripped.startswith("hooks"):
+        if in_features and re.match(r"^hooks\s*=", stripped):
             line = "hooks = true"
             saw_hooks = True
         out.append(line)
@@ -180,7 +252,20 @@ else:
         out.append("hooks = true")
     text = "\n".join(out) + "\n"
 path.parent.mkdir(parents=True, exist_ok=True)
-path.write_text(text)
+mode = 0o600
+descriptor, temporary = tempfile.mkstemp(prefix=".agent-island-config.", dir=path.parent, text=True)
+try:
+    with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+        fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.chmod(temporary, mode)
+    os.replace(temporary, path)
+finally:
+    try:
+        os.unlink(temporary)
+    except FileNotFoundError:
+        pass
 PY
   fi
     if $uninstall; then

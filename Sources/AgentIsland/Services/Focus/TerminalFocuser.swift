@@ -783,6 +783,6 @@ enum TerminalFocuser {
     }
 
     private static func appleScriptLiteral(_ value: String) -> String {
-        "\"\(value.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\""))\""
+        AppleScriptEscaping.literal(value)
     }
 }

@@ -3,6 +3,7 @@
 
 import Darwin
 import Foundation
+import Security
 
 struct BrowserBridgePayload: Decodable {
     var version: Int
@@ -125,6 +126,85 @@ enum BrowserBridgeProtocol {
     }
 }
 
+struct WebBridgeHTTPRequest {
+    var method: String
+    var path: String
+    var authorization: String?
+    var body: Data
+}
+
+enum WebBridgeHTTPRequestParseResult {
+    case incomplete
+    case rejected
+    case complete(WebBridgeHTTPRequest)
+}
+
+enum WebBridgeHTTPRequestParser {
+    static let maximumHeaderSize = 16_384
+    static let maximumBodySize = 65_536
+    static let maximumRequestSize = maximumHeaderSize + maximumBodySize + 4
+
+    static func parse(_ data: Data) -> WebBridgeHTTPRequestParseResult {
+        guard data.count <= maximumRequestSize else { return .rejected }
+        guard let headerRange = data.range(of: Data("\r\n\r\n".utf8)) else {
+            return data.count > maximumHeaderSize ? .rejected : .incomplete
+        }
+        guard headerRange.lowerBound <= maximumHeaderSize,
+              let header = String(data: data[..<headerRange.lowerBound], encoding: .utf8) else {
+            return .rejected
+        }
+
+        let lines = header.components(separatedBy: "\r\n")
+        guard let requestLine = lines.first?.split(separator: " "),
+              requestLine.count == 3,
+              requestLine[2] == "HTTP/1.1" || requestLine[2] == "HTTP/1.0" else {
+            return .rejected
+        }
+
+        let contentLengthHeaders = lines.dropFirst().filter {
+            $0.lowercased().hasPrefix("content-length:")
+        }
+        guard contentLengthHeaders.count == 1,
+              let rawLength = contentLengthHeaders[0]
+                .split(separator: ":", maxSplits: 1)
+                .last?
+                .trimmingCharacters(in: .whitespaces),
+              let contentLength = Int(rawLength),
+              (0...maximumBodySize).contains(contentLength) else {
+            return .rejected
+        }
+
+        let bodyStart = headerRange.upperBound
+        guard bodyStart <= data.count,
+              contentLength <= maximumRequestSize - bodyStart else {
+            return .rejected
+        }
+        guard data.count - bodyStart >= contentLength else { return .incomplete }
+        guard data.count - bodyStart == contentLength else { return .rejected }
+
+        let transferEncodingHeaders = lines.dropFirst().filter {
+            $0.lowercased().hasPrefix("transfer-encoding:")
+        }
+        guard transferEncodingHeaders.isEmpty else { return .rejected }
+
+        let authorizationHeaders = lines.dropFirst().filter {
+            $0.lowercased().hasPrefix("authorization:")
+        }
+        guard authorizationHeaders.count <= 1 else { return .rejected }
+        let authorization = authorizationHeaders.first?
+            .split(separator: ":", maxSplits: 1)
+            .last?
+            .trimmingCharacters(in: .whitespaces)
+
+        return .complete(WebBridgeHTTPRequest(
+            method: String(requestLine[0]),
+            path: String(requestLine[1]),
+            authorization: authorization,
+            body: Data(data[bodyStart..<(bodyStart + contentLength)])
+        ))
+    }
+}
+
 /// Receives minimal status frames from the optional browser extension.
 /// It binds only to loopback and requires a per-install bearer token.
 final class WebBridgeServer {
@@ -134,9 +214,11 @@ final class WebBridgeServer {
     private let root: URL
     private let health: TransportHealthStore
     private let queue = DispatchQueue(label: "local.agent-island.web-bridge", qos: .userInitiated)
+    private let tokenLock = NSLock()
     private let onEvent: () -> Void
     private var socketFD: Int32 = -1
     private var acceptSource: DispatchSourceRead?
+    private var cachedPairingToken: String?
 
     init(
         root: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agent-island"),
@@ -150,21 +232,40 @@ final class WebBridgeServer {
 
     deinit { stop() }
 
-    var pairingToken: String {
+    var pairingToken: String? {
+        tokenLock.lock()
+        defer { tokenLock.unlock() }
+        if let cachedPairingToken { return cachedPairingToken }
+
         let url = root.appendingPathComponent("web-bridge-token")
-        if let token = try? String(contentsOf: url, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines), token.count >= 32 {
+        do {
+            try LocalDataSecurity.ensurePrivateDirectory(at: root)
+            if let token = try? LocalDataSecurity.readPrivateString(url, maximumBytes: 256)
+                .trimmingCharacters(in: .whitespacesAndNewlines), Self.isValidToken(token) {
+                cachedPairingToken = token
+                return token
+            }
+
+            let token = try randomToken()
+            try LocalDataSecurity.writePrivate(token, to: url)
+            cachedPairingToken = token
             return token
+        } catch {
+            islandLog("web bridge token unavailable error=\(error.localizedDescription)")
+            return nil
         }
-        let token = randomToken()
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try? token.write(to: url, atomically: true, encoding: .utf8)
-        chmod(url.path, S_IRUSR | S_IWUSR)
-        return token
     }
 
     func start() {
-        _ = pairingToken
+        guard pairingToken != nil else {
+            health.markFailure(
+                id: Self.healthID,
+                name: "Browser Web Bridge",
+                endpoint: endpoint,
+                error: "Could not create an owner-only pairing token"
+            )
+            return
+        }
         health.markAttempt(id: Self.healthID, name: "Browser Web Bridge", endpoint: endpoint)
         queue.async { [weak self] in self?.startOnQueue() }
     }
@@ -244,6 +345,9 @@ final class WebBridgeServer {
         }
         var timeout = timeval(tv_sec: 3, tv_usec: 0)
         setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        var noSigpipe: Int32 = 1
+        setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigpipe, socklen_t(MemoryLayout<Int32>.size))
         guard let request = readRequest(client) else {
             writeResponse(400, "invalid request", to: client)
             return
@@ -252,7 +356,8 @@ final class WebBridgeServer {
             writeResponse(404, "not found", to: client)
             return
         }
-        guard request.authorization == "Bearer \(pairingToken)" else {
+        guard let pairingToken,
+              Self.constantTimeEqual(request.authorization, "Bearer \(pairingToken)") else {
             health.markFailure(id: Self.healthID, name: "Browser Web Bridge", state: .degraded, endpoint: endpoint, error: "Rejected unauthenticated browser event")
             writeResponse(401, "unauthorized", to: client)
             return
@@ -316,13 +421,16 @@ final class WebBridgeServer {
     }
 
     private func append(payload: BrowserBridgePayload, family: String, phase: String) {
-        let session = payload.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let session = compact(
+            payload.sessionID?.trimmingCharacters(in: .whitespacesAndNewlines),
+            limit: 200
+        )
         let fallback = BrowserBridgeProtocol.fallbackSession(family: family, url: payload.url)
         let frame: [String: Any] = [
             "agent": family,
             "surface": "web",
             "status": phase,
-            "session": (session?.isEmpty == false ? session! : fallback),
+            "session": session.isEmpty ? fallback : session,
             "title": compact(payload.title, limit: 120),
             "message": compact(payload.detail, limit: 180),
             "origin": "web_bridge",
@@ -333,38 +441,24 @@ final class WebBridgeServer {
               let data = try? JSONSerialization.data(withJSONObject: frame),
               let line = String(data: data, encoding: .utf8) else { return }
         let url = root.appendingPathComponent("events.jsonl")
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        if let handle = try? FileHandle(forWritingTo: url) {
-            defer { try? handle.close() }
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: Data((line + "\n").utf8))
-        } else {
-            try? Data((line + "\n").utf8).write(to: url, options: .atomic)
-        }
+        try? LocalDataSecurity.appendPrivate(Data((line + "\n").utf8), to: url)
     }
 
-    private func readRequest(_ fd: Int32) -> (method: String, path: String, authorization: String?, body: Data)? {
+    private func readRequest(_ fd: Int32) -> WebBridgeHTTPRequest? {
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 8192)
-        var expectedBodyLength: Int?
-        while data.count < 131_072 {
+        while data.count <= WebBridgeHTTPRequestParser.maximumRequestSize {
             let count = recv(fd, &buffer, buffer.count, 0)
             guard count > 0 else { return nil }
             data.append(buffer, count: count)
-            guard let headerRange = data.range(of: Data("\r\n\r\n".utf8)) else { continue }
-            let header = String(data: data[..<headerRange.lowerBound], encoding: .utf8) ?? ""
-            let lines = header.components(separatedBy: "\r\n")
-            guard let requestLine = lines.first?.split(separator: " "), requestLine.count >= 2 else { return nil }
-            if expectedBodyLength == nil {
-                expectedBodyLength = lines.dropFirst().first { $0.lowercased().hasPrefix("content-length:") }
-                    .flatMap { Int($0.split(separator: ":", maxSplits: 1).last?.trimmingCharacters(in: .whitespaces) ?? "") }
-                    ?? 0
+            switch WebBridgeHTTPRequestParser.parse(data) {
+            case .incomplete:
+                continue
+            case .rejected:
+                return nil
+            case .complete(let request):
+                return request
             }
-            let bodyStart = headerRange.upperBound
-            guard let expectedBodyLength, data.count >= bodyStart + expectedBodyLength else { continue }
-            let authorization = lines.dropFirst().first { $0.lowercased().hasPrefix("authorization:") }
-                .flatMap { $0.split(separator: ":", maxSplits: 1).last?.trimmingCharacters(in: .whitespaces) }
-            return (String(requestLine[0]), String(requestLine[1]), authorization, Data(data[bodyStart..<(bodyStart + expectedBodyLength)]))
         }
         return nil
     }
@@ -372,14 +466,49 @@ final class WebBridgeServer {
     private func writeResponse(_ status: Int, _ text: String, to fd: Int32) {
         let body = Data(text.utf8)
         let response = "HTTP/1.1 \(status) \(text)\r\nContent-Type: text/plain\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
-        _ = send(fd, response, response.utf8.count, 0)
-        _ = body.withUnsafeBytes { send(fd, $0.baseAddress, body.count, 0) }
+        sendAll(Data(response.utf8), to: fd)
+        sendAll(body, to: fd)
     }
 
-    private func randomToken() -> String {
+    private func sendAll(_ data: Data, to fd: Int32) {
+        data.withUnsafeBytes { bytes in
+            guard let baseAddress = bytes.baseAddress else { return }
+            var offset = 0
+            while offset < bytes.count {
+                let count = send(fd, baseAddress.advanced(by: offset), bytes.count - offset, 0)
+                if count > 0 {
+                    offset += count
+                } else if count < 0, errno == EINTR {
+                    continue
+                } else {
+                    return
+                }
+            }
+        }
+    }
+
+    private func randomToken() throws -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let result = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard result == errSecSuccess else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(result))
+        }
         return bytes.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func constantTimeEqual(_ left: String?, _ right: String) -> Bool {
+        guard let leftData = left?.data(using: .utf8),
+              let rightData = right.data(using: .utf8),
+              leftData.count == rightData.count else { return false }
+        return zip(leftData, rightData).reduce(UInt8(0)) { difference, pair in
+            difference | (pair.0 ^ pair.1)
+        } == 0
+    }
+
+    private static func isValidToken(_ token: String) -> Bool {
+        token.count == 64 && token.unicodeScalars.allSatisfy {
+            CharacterSet(charactersIn: "0123456789abcdefABCDEF").contains($0)
+        }
     }
 
     private func compact(_ value: String?, limit: Int) -> String {

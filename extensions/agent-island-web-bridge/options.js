@@ -7,8 +7,8 @@ chrome.storage.local.get(["pairingToken"], ({ pairingToken }) => {
 
 document.querySelector("#save").addEventListener("click", () => {
   const value = token.value.trim();
-  if (value.length < 32) {
-    status.textContent = "The token is incomplete.";
+  if (!/^[0-9a-f]{64}$/i.test(value)) {
+    status.textContent = "The token must be the 64-character value copied from Agent Island.";
     return;
   }
   chrome.storage.local.set({ pairingToken: value }, () => {

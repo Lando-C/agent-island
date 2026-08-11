@@ -22,9 +22,12 @@ jobs:
   package:
     name: Package macOS app
     runs-on: macos-14
+    timeout-minutes: 45
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Validate release tag
         env:
@@ -33,7 +36,15 @@ jobs:
           [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
 
       - name: Swift production tests
-        run: scripts/test-swift
+        run: scripts/test-swift --require-xctest
+
+      - name: Python and local-security validation
+        run: |
+          python3 Tests/Python/test_claude_hook_fixture_replay.py
+          python3 Tests/Python/test_codex_broker_probe_security.py
+          python3 Tests/Python/test_local_data_security.py
+          scripts/validate-install-hooks
+          scripts/validate-support-bundle
 
       - name: Reducer and interaction validation
         run: |
@@ -107,7 +118,7 @@ jobs:
           cp Casks/agent-island.rb dist/agent-island.rb
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: Agent-Island-macOS
           path: |

@@ -1,5 +1,10 @@
 # Agent Island 竞品源码结构与功能效果矩阵
 
+> 历史研究记录（2026-07-09）。表中的本地源码路径指向被 `.gitignore` 排除的
+> 临时研究快照，不属于公开仓库或应用分发内容。当前代码来源与许可证边界以
+> [`THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md) 为准；GPL/未知许可证项目
+> 仅作为 clean-room 设计参考。
+
 日期：2026-07-09  
 源码复制区：[code-study](research/competitors/code-study)  
 旧版代码级报告：[code-comparison.md](research/competitors/code-comparison.md)

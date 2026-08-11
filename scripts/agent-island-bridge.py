@@ -24,6 +24,13 @@ import time
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from agent_island_local_data import append_private_text, ensure_private_parent, write_private_text
+
+os.umask(0o077)
+
 
 EVENTS_PATH = Path.home() / ".agent-island" / "events.jsonl"
 LOG_PATH = Path.home() / ".agent-island" / "bridge.log"
@@ -93,6 +100,21 @@ SAFE_SHELL_PREFIXES = (
     "wc ",
 )
 
+SENSITIVE_READ_MARKERS = (
+    "/.ssh/",
+    "/.aws/",
+    "/.gnupg/",
+    "/.config/gcloud/",
+    "/library/keychains/",
+    "/.git-credentials",
+    "/.npmrc",
+    "/.pypirc",
+    "/credentials",
+    "/id_rsa",
+    "/id_ed25519",
+    "/.env",
+)
+
 
 def normalize_name(value: str) -> str:
     return value.lower().replace("_", "").replace("-", "")
@@ -100,9 +122,10 @@ def normalize_name(value: str) -> str:
 
 def log(message: str) -> None:
     try:
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with LOG_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
+        append_private_text(
+            LOG_PATH,
+            f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n",
+        )
     except Exception:
         pass
 
@@ -250,6 +273,56 @@ def tool_input_summary(payload: dict[str, Any]) -> str:
     return compact_text(value, 240)
 
 
+def read_only_target_paths(payload: dict[str, Any]) -> list[str]:
+    value = tool_input_value(payload)
+    if not isinstance(value, dict):
+        return []
+    paths: list[str] = []
+    for key in ("file_path", "filepath", "path", "directory", "root", "cwd"):
+        item = value.get(key)
+        if isinstance(item, str) and item.strip():
+            paths.append(item.strip())
+        elif isinstance(item, list):
+            paths.extend(str(entry).strip() for entry in item if str(entry).strip())
+    return paths
+
+
+def read_only_manual_review_reason(payload: dict[str, Any]) -> str | None:
+    tool = normalize_name(tool_name(payload))
+    if tool == "todoread":
+        return None
+    targets = read_only_target_paths(payload)
+    if tool == "read" and not targets:
+        return "read target is missing; require human review"
+
+    workspace = cwd(payload).strip()
+    workspace_real = os.path.realpath(os.path.expanduser(workspace)) if workspace else ""
+    home_real = os.path.realpath(os.path.expanduser("~"))
+    if not workspace_real:
+        return "read-only tool has no verified workspace"
+    if workspace_real in {"/", home_real}:
+        return "read-only tool workspace is too broad for automatic approval"
+
+    for target in targets:
+        expanded = os.path.expanduser(target)
+        normalized = expanded.replace("\\", "/").lower()
+        padded = normalized if normalized.startswith("/") else "/" + normalized
+        if any(marker in padded for marker in SENSITIVE_READ_MARKERS):
+            return "read target may contain credentials; require human review"
+        target_real = os.path.realpath(
+            expanded if os.path.isabs(expanded) else os.path.join(workspace_real, expanded)
+        )
+        normalized_real = target_real.replace("\\", "/").lower()
+        if any(marker in normalized_real for marker in SENSITIVE_READ_MARKERS):
+            return "read target may contain credentials; require human review"
+        try:
+            if os.path.commonpath([workspace_real, target_real]) != workspace_real:
+                return "read target is outside the active workspace"
+        except ValueError:
+            return "read target is outside the active workspace"
+    return None
+
+
 def classify_tool_risk(payload: dict[str, Any]) -> dict[str, Any]:
     tool = tool_name(payload).strip()
     normalized = tool.lower().replace("_", "").replace("-", "")
@@ -257,6 +330,12 @@ def classify_tool_risk(payload: dict[str, Any]) -> dict[str, Any]:
     lowered_command = command.lower()
 
     if normalized in READ_ONLY_TOOLS:
+        if reason := read_only_manual_review_reason(payload):
+            return {
+                "risk": "manual_sensitive_read",
+                "reason": reason,
+                "auto_approval_eligible": False,
+            }
         return {
             "risk": "safe_read",
             "reason": f"{tool or 'tool'} is read-only",
@@ -764,7 +843,6 @@ def classify(source: str, event: str, payload: dict[str, Any]) -> tuple[str, str
 
 
 def write_event(source: str, phase: str, title: str, message: str, payload: dict[str, Any]) -> dict[str, Any]:
-    EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     pid = os.getppid()
     terminal = terminal_metadata(payload, pid)
     risk = classify_tool_risk(payload)
@@ -802,8 +880,10 @@ def write_event(source: str, phase: str, title: str, message: str, payload: dict
     if input_summary:
         frame["tool_input_summary"] = input_summary
     frame.update({key: value for key, value in terminal.items() if value})
-    with EVENTS_PATH.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(frame, ensure_ascii=False, separators=(",", ":")) + "\n")
+    append_private_text(
+        EVENTS_PATH,
+        json.dumps(frame, ensure_ascii=False, separators=(",", ":")) + "\n",
+    )
     prune_events()
     return frame
 
@@ -843,10 +923,8 @@ def prune_events(max_lines: int = 2000, retain_lines: int = 1500) -> None:
             # Leave headroom so an active session does not rewrite the whole
             # event log after every single hook event.
             lines = lines[-retain_lines:]
-        EVENTS_PATH.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
-        EVENTS_PATH.chmod(0o600)
-        EVENTS_PRUNE_MARKER_PATH.write_text(str(now), encoding="utf-8")
-        EVENTS_PRUNE_MARKER_PATH.chmod(0o600)
+        write_private_text(EVENTS_PATH, ("\n".join(lines) + "\n") if lines else "")
+        write_private_text(EVENTS_PRUNE_MARKER_PATH, str(now))
     except Exception as exc:
         log(f"event prune failed: {exc}")
 

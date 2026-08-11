@@ -112,6 +112,72 @@ private func browserBridgeVersionDriftFixture() -> Bool {
     )
 }
 
+private func browserBridgeHTTPRequestParserFixture() -> Bool {
+    let body = #"{"version":3}"#
+    let valid = Data("""
+    POST /v1/events HTTP/1.1\r
+    Host: 127.0.0.1\r
+    Authorization: Bearer test-token\r
+    Content-Length: \(body.utf8.count)\r
+    \r
+    \(body)
+    """.utf8)
+    guard case let .complete(request) = WebBridgeHTTPRequestParser.parse(valid),
+          request.method == "POST",
+          request.path == "/v1/events",
+          request.authorization == "Bearer test-token",
+          request.body == Data(body.utf8) else {
+        return false
+    }
+
+    let incomplete = Data("POST /v1/events HTTP/1.1\r\nContent-Length: 4\r\n\r\n{}".utf8)
+    guard case .incomplete = WebBridgeHTTPRequestParser.parse(incomplete) else { return false }
+
+    let invalidLengths = ["-1", "65537", "999999999999999999999999"]
+    for length in invalidLengths {
+        let data = Data("POST /v1/events HTTP/1.1\r\nContent-Length: \(length)\r\n\r\n".utf8)
+        guard case .rejected = WebBridgeHTTPRequestParser.parse(data) else { return false }
+    }
+
+    let duplicateLength = Data("""
+    POST /v1/events HTTP/1.1\r
+    Content-Length: 0\r
+    Content-Length: 0\r
+    \r
+
+    """.utf8)
+    guard case .rejected = WebBridgeHTTPRequestParser.parse(duplicateLength) else { return false }
+
+    let transferEncoded = Data("POST /v1/events HTTP/1.1\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n".utf8)
+    guard case .rejected = WebBridgeHTTPRequestParser.parse(transferEncoded) else { return false }
+
+    let trailingRequest = Data("POST /v1/events HTTP/1.1\r\nContent-Length: 0\r\n\r\nGET / HTTP/1.1\r\n\r\n".utf8)
+    guard case .rejected = WebBridgeHTTPRequestParser.parse(trailingRequest) else { return false }
+
+    let oversizedHeader = Data(repeating: 65, count: WebBridgeHTTPRequestParser.maximumHeaderSize + 1)
+    guard case .rejected = WebBridgeHTTPRequestParser.parse(oversizedHeader) else { return false }
+    return true
+}
+
+private func browserBridgePrivateTokenFixture() -> String? {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("agent-island-web-token-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let health = TransportHealthStore(outputURL: root.appendingPathComponent("transport-health.json"))
+    let server = WebBridgeServer(root: root, health: health)
+    guard let token = server.pairingToken, token.count == 64 else {
+        return "pairing token was not generated"
+    }
+    let tokenURL = root.appendingPathComponent("web-bridge-token")
+    let rootAttributes = try? FileManager.default.attributesOfItem(atPath: root.path)
+    let tokenAttributes = try? FileManager.default.attributesOfItem(atPath: tokenURL.path)
+    let rootMode = (rootAttributes?[.posixPermissions] as? NSNumber)?.intValue
+    let tokenMode = (tokenAttributes?[.posixPermissions] as? NSNumber)?.intValue
+    guard rootMode == 0o700 else { return "pairing directory mode was \(rootMode ?? -1)" }
+    guard tokenMode == 0o600 else { return "pairing token mode was \(tokenMode ?? -1)" }
+    return nil
+}
+
 #if canImport(Testing) && !AGENT_ISLAND_USE_XCTEST
 @Suite("Browser bridge protocol")
 struct BrowserBridgeProtocolTests {
@@ -136,6 +202,16 @@ struct BrowserBridgeProtocolTests {
     func versionDrift() {
         #expect(browserBridgeVersionDriftFixture())
     }
+
+    @Test("Rejects malformed and oversized local HTTP requests")
+    func httpParserBoundaries() {
+        #expect(browserBridgeHTTPRequestParserFixture())
+    }
+
+    @Test("Stores the pairing token with owner-only permissions")
+    func privatePairingToken() {
+        #expect(browserBridgePrivateTokenFixture() == nil)
+    }
 }
 #elseif canImport(XCTest)
 final class BrowserBridgeProtocolTests: XCTestCase {
@@ -156,6 +232,14 @@ final class BrowserBridgeProtocolTests: XCTestCase {
 
     func testReportsProtocolAndDetectorVersionDriftAsDegraded() {
         XCTAssertTrue(browserBridgeVersionDriftFixture())
+    }
+
+    func testRejectsMalformedAndOversizedLocalHTTPRequestLengths() {
+        XCTAssertTrue(browserBridgeHTTPRequestParserFixture())
+    }
+
+    func testStoresPairingTokenWithOwnerOnlyPermissions() {
+        XCTAssertNil(browserBridgePrivateTokenFixture())
     }
 }
 #endif

@@ -2,14 +2,26 @@
 
 [English](README.md)
 
+[![CI](https://github.com/Lando-C/agent-island/actions/workflows/ci.yml/badge.svg)](https://github.com/Lando-C/agent-island/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/Lando-C/agent-island/actions/workflows/codeql.yml/badge.svg)](https://github.com/Lando-C/agent-island/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/Lando-C/agent-island?include_prereleases)](https://github.com/Lando-C/agent-island/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+> **当前状态：公开开发预览版。** GitHub 上的应用包目前采用临时签名，尚未通过
+> Apple 公证；Homebrew tap 也尚未发布。建议先审阅安装脚本，并预期 macOS 首次
+> 打开预览版时会要求手动确认。
+
 Agent Island 是面向 macOS 的 AI Agent 运行状态灵动岛。它区分 Codex、Claude
 Code、Claude Desktop、Claude Science、ChatGPT、终端与网页会话，重点回答：谁真
 正在工作、谁已完成、谁在等待人类审批或输入，以及如何点击回到对应窗口。
 
+运行链路与组件边界见 [架构说明](docs/ARCHITECTURE.md)，本地数据与网络边界见
+[隐私说明](docs/PRIVACY.md)。
+
 ## 一键安装
 
-系统要求：macOS 13 或更高版本。GitHub Release 提供同时支持 Apple Silicon 和
-Intel Mac 的通用应用包。
+系统要求：macOS 13 或更高版本。预览版 Release 提供同时支持 Apple Silicon 和
+Intel Mac 的通用应用包，但目前尚未通过 Apple 公证。
 
 在“终端”中运行：
 
@@ -53,11 +65,8 @@ bash /tmp/agent-island-install --no-open
 
 以后重复执行一键安装命令即可更新。
 
-稳定版在发布到 Homebrew tap 后可通过以下命令安装：
-
-```bash
-brew install --cask Lando-C/tap/agent-island
-```
+Homebrew 安装将在首个 Developer ID 签名并通过 Apple 公证的稳定版之后提供。
+仓库中的 Cask 目前只是发布模板，并不是已经可用的 tap。
 
 ## 手动下载安装
 
@@ -70,8 +79,8 @@ brew install --cask Lando-C/tap/agent-island
    ```
 
 4. 解压并将 `Agent Island.app` 移入 `/Applications`。
-5. 稳定版会经过 Apple 公证；开发预览版仍可能需要按住 Control 点击 App，选择
-   “打开”，再确认“打开”。
+5. 当前开发预览版可能需要按住 Control 点击 App，选择“打开”，再确认“打开”；
+   未来稳定版必须先完成 Apple 公证。
 6. 打开 **Settings > Diagnostics**，安装 Hooks，并按需授予权限。
 
 ## 首次使用
@@ -136,7 +145,8 @@ open "/Applications/Agent Island.app"
 "/Applications/Agent Island.app/Contents/Resources/scripts/agent-island-support-bundle"
 ```
 
-该支持包不包含 `events.jsonl`、聊天记录、Hook payload、命令、session ID 或项目路径。
+该支持包不包含 `events.jsonl`、聊天记录、Hook payload 或命令，并会再次脱敏
+凭证、令牌、邮箱、session ID、用户/项目路径和非本机回环 IP。分享前仍应自行检查。
 
 正常情况下，可选终端未安装或未运行会显示 `WARN`；真正阻止产品运行的问题才应
 显示为 `FAIL`。
@@ -144,9 +154,9 @@ open "/Applications/Agent Island.app"
 ## 网页端 Bridge
 
 Chrome/Chromium 可以加载可选的本地网页 Bridge，以显示 ChatGPT、Claude 和 Codex
-网页会话的最小状态。它只监听 `127.0.0.1`，每台机器使用独立配对令牌，并且只发送
-引擎名、页面派生会话键、标题、状态和 URL 路径，不读取或上传正文、提问、回复、
-Cookie 或凭证。
+网页会话的最小状态。它只监听 `127.0.0.1`，每台机器使用独立配对令牌，并且只读取
+会话标题和少量已知 UI 控件，发送引擎名、页面派生会话键、标题、状态和 URL 路径；
+不读取或发送提问/回复正文、工具输入、查询参数、Cookie 或凭证。
 
 1. 在 Agent Island 的 **Settings > Diagnostics** 点击 **Copy Web Bridge Token**。
 2. 打开 `chrome://extensions`，开启开发者模式，选择“加载已解压的扩展程序”。
@@ -181,5 +191,19 @@ rm -rf "$HOME/.agent-island"
 - 不上传会话、对话、Hook payload 或诊断信息。
 - Hook 配置写入前会创建 `.agent-island.bak`。
 - 自动审批默认关闭，只读候选也必须由用户主动开启。
+- 除 `TodoRead` 外，自动审批候选必须解析到当前工作区内；缺少目标、相对路径逃逸、
+  用户主目录/根目录、`.env`、SSH、云凭证、钥匙串和其他敏感路径都必须人工确认。
+- 本地数据目录固定为仅所有者可访问（`0700`），Agent Island 自有文件固定为
+  `0600`；敏感写入会拒绝符号链接和非常规文件目标。
 - 完整功能、已知边界和路线图见 [README.md](README.md)、
+  [隐私说明](docs/PRIVACY.md)、[安全策略](SECURITY.md)、
   [产品蓝图](docs/PRODUCT_BLUEPRINT.md) 和 [路线图](docs/ROADMAP.md)。
+
+## 贡献与许可证
+
+欢迎提交 Issue 和范围清晰的 PR，请先阅读 [贡献指南](CONTRIBUTING.md)。安全问题
+请按照 [安全策略](SECURITY.md) 私下报告。
+
+Agent Island 主项目采用 MIT 许可证。Apache-2.0 适配代码及其归属说明见
+[第三方声明](THIRD_PARTY_NOTICES.md) 和
+[`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt)。

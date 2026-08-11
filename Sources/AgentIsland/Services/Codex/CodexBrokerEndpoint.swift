@@ -35,9 +35,7 @@ enum CodexBrokerEndpoint {
         fileManager: FileManager
     ) -> [String] {
         var discovered: [(date: Date, path: String)] = []
-        if let overridePath, !overridePath.isEmpty {
-            // Keep an explicit override first even when it is stale. Connection
-            // failure will fall through to discovered sockets.
+        if let overridePath, !overridePath.isEmpty, isTrustedSocket(overridePath) {
             discovered.append((.distantFuture, overridePath))
         }
 
@@ -48,7 +46,7 @@ enum CodexBrokerEndpoint {
                     .appendingPathComponent(entry)
                     .appendingPathComponent("broker.sock")
                     .path
-                guard fileManager.fileExists(atPath: path) else { continue }
+                guard isTrustedSocket(path) else { continue }
                 let attributes = try? fileManager.attributesOfItem(atPath: path)
                 let date = attributes?[.modificationDate] as? Date ?? .distantPast
                 discovered.append((date, path))
@@ -82,6 +80,7 @@ enum CodexBrokerEndpoint {
     }
 
     private static func connect(path: String) -> Int32? {
+        guard isTrustedSocket(path) else { return nil }
         let socketFD = socket(AF_UNIX, SOCK_STREAM, 0)
         guard socketFD >= 0 else { return nil }
         var address = sockaddr_un()
@@ -110,5 +109,26 @@ enum CodexBrokerEndpoint {
             return nil
         }
         return socketFD
+    }
+
+    /// A broker can request approval responses, so discovery must not trust an
+    /// arbitrary newer socket created by another local account in `/tmp`.
+    static func isTrustedSocket(_ path: String, effectiveUID: uid_t = geteuid()) -> Bool {
+        var socketMetadata = stat()
+        guard lstat(path, &socketMetadata) == 0,
+              socketMetadata.st_mode & S_IFMT == S_IFSOCK,
+              socketMetadata.st_uid == effectiveUID else {
+            return false
+        }
+
+        let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+        var parentMetadata = stat()
+        guard lstat(parent, &parentMetadata) == 0,
+              parentMetadata.st_mode & S_IFMT == S_IFDIR,
+              parentMetadata.st_uid == effectiveUID else {
+            return false
+        }
+        let writableByOthers = mode_t(S_IWGRP | S_IWOTH)
+        return parentMetadata.st_mode & writableByOthers == 0
     }
 }

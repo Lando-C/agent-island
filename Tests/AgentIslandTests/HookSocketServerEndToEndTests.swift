@@ -10,12 +10,28 @@ import XCTest
 #endif
 @testable import AgentIsland
 
-private func hookSocketApprovalRoundTrip() -> String? {
-    let root = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-island-hook-\(UUID().uuidString)", isDirectory: true)
+private func makeShortPrivateTemporaryDirectory(prefix: String) -> URL? {
     // Unix-domain paths are capped near 104 bytes on macOS. XCTest temporary
     // roots on hosted runners can exceed that before adding the socket name.
-    let socketPath = "/tmp/ai-hook-\(UUID().uuidString.prefix(8)).sock"
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("\(prefix)-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    do {
+        try FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: 0o700]
+        )
+        return root
+    } catch {
+        return nil
+    }
+}
+
+private func hookSocketApprovalRoundTrip() -> String? {
+    guard let root = makeShortPrivateTemporaryDirectory(prefix: "ai-hook") else {
+        return "private socket directory was not created"
+    }
+    let socketPath = root.appendingPathComponent("hook.sock").path
     defer { try? FileManager.default.removeItem(at: root) }
 
     let store = PendingRequestStore()
@@ -74,9 +90,10 @@ private func hookSocketApprovalRoundTrip() -> String? {
 }
 
 private func hookSocketQuestionRoundTrip() -> String? {
-    let root = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-island-question-\(UUID().uuidString)", isDirectory: true)
-    let socketPath = "/tmp/ai-question-\(UUID().uuidString.prefix(8)).sock"
+    guard let root = makeShortPrivateTemporaryDirectory(prefix: "ai-question") else {
+        return "private question socket directory was not created"
+    }
+    let socketPath = root.appendingPathComponent("hook.sock").path
     defer { try? FileManager.default.removeItem(at: root) }
 
     let store = PendingRequestStore()

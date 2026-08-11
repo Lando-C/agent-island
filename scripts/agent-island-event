@@ -32,17 +32,25 @@ surface="$2"
 phase="$3"
 title="${4:-}"
 message="${5:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-python3 - "$agent" "$surface" "$phase" "$title" "$message" <<'PY'
+python3 - "$SCRIPT_DIR" "$agent" "$surface" "$phase" "$title" "$message" <<'PY'
 import json
 import os
 import pathlib
 import sys
 import time
 
-agent, surface, phase, title, message = sys.argv[1:6]
+script_dir = pathlib.Path(sys.argv[1]).resolve()
+if str(script_dir) not in sys.path:
+    sys.path.insert(0, str(script_dir))
+from agent_island_local_data import append_private_text, read_private_text, write_private_text
+
+os.umask(0o077)
+
+agent, surface, phase, title, message = sys.argv[2:7]
 root = pathlib.Path.home() / ".agent-island"
-root.mkdir(parents=True, exist_ok=True)
+events_path = root / "events.jsonl"
 
 event = {
     "agent": agent,
@@ -54,15 +62,16 @@ event = {
     "ts": time.time(),
 }
 
-with (root / "events.jsonl").open("a", encoding="utf-8") as fh:
-    fh.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+append_private_text(
+    events_path,
+    json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n",
+)
 
-events_path = root / "events.jsonl"
 try:
     marker_path = root / "events-pruned-at"
     now = time.time()
     try:
-        last_pruned_at = float(marker_path.read_text(encoding="utf-8"))
+        last_pruned_at = float(read_private_text(marker_path, maximum_bytes=128))
     except Exception:
         last_pruned_at = 0
     if events_path.stat().st_size < 1_000_000 and now - last_pruned_at < 60 * 60:
@@ -71,7 +80,7 @@ try:
     retention_path = root / "data-retention.json"
     retention_days = 30
     try:
-        retention = json.loads(retention_path.read_text(encoding="utf-8"))
+        retention = json.loads(read_private_text(retention_path, maximum_bytes=65_536))
         retention_days = {"7_days": 7, "30_days": 30, "90_days": 90}.get(
             str(retention.get("eventLog") or ""), 30
         )
@@ -79,16 +88,14 @@ try:
         pass
     cutoff = now - retention_days * 24 * 60 * 60
     retained = []
-    for line in events_path.read_text(encoding="utf-8").splitlines():
+    for line in read_private_text(events_path).splitlines():
         try:
             if float(json.loads(line).get("ts") or 0) >= cutoff:
                 retained.append(line)
         except Exception:
             pass
-    events_path.write_text(("\n".join(retained[-2000:]) + "\n") if retained else "", encoding="utf-8")
-    events_path.chmod(0o600)
-    marker_path.write_text(str(now), encoding="utf-8")
-    marker_path.chmod(0o600)
+    write_private_text(events_path, ("\n".join(retained[-2000:]) + "\n") if retained else "")
+    write_private_text(marker_path, str(now))
 except Exception:
     pass
 

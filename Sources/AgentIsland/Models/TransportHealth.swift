@@ -163,11 +163,10 @@ final class TransportHealthStore: ObservableObject {
 
     private func persist(_ snapshots: [TransportHealthSnapshot]) {
         do {
-            try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            try encoder.encode(snapshots).write(to: outputURL, options: .atomic)
+            try LocalDataSecurity.writePrivate(encoder.encode(snapshots), to: outputURL)
         } catch {
             islandLog("transport health persist failed error=\(error.localizedDescription)")
         }

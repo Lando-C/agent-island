@@ -149,6 +149,11 @@ staged_app="$unpack_dir/$APP_NAME"
   exit 1
 }
 codesign --verify --deep --strict "$staged_app"
+bundle_identifier="$(codesign -dv --verbose=4 "$staged_app" 2>&1 | sed -n 's/^Identifier=//p' | head -n 1)"
+[[ "$bundle_identifier" == "local.agent-island" ]] || {
+  echo "release bundle identifier is unexpected; refusing to install" >&2
+  exit 1
+}
 
 mkdir -p "$INSTALL_DIR"
 if [[ "$INSTALL_PATH" == "/Applications/$APP_NAME" ]] && pgrep -x AgentIsland >/dev/null 2>&1; then
@@ -161,6 +166,24 @@ if [[ "$INSTALL_PATH" == "/Applications/$APP_NAME" ]] && pgrep -x AgentIsland >/
 fi
 
 backup_app="$tmp_dir/previous-$APP_NAME"
+restore_previous_app() {
+  if [[ -e "$INSTALL_PATH" || -L "$INSTALL_PATH" ]]; then
+    rm -rf "$INSTALL_PATH" || {
+      trap - EXIT
+      echo "Automatic rollback could not remove the incomplete app at $INSTALL_PATH" >&2
+      return 1
+    }
+  fi
+  if [[ -e "$backup_app" ]]; then
+    if ! mv "$backup_app" "$INSTALL_PATH"; then
+      trap - EXIT
+      echo "Automatic rollback failed; the previous app backup remains at $backup_app" >&2
+      return 1
+    fi
+    echo "The previous Agent Island app was restored." >&2
+  fi
+}
+
 if [[ -e "$INSTALL_PATH" ]]; then
   mv "$INSTALL_PATH" "$backup_app" || {
     echo "cannot replace $INSTALL_PATH; check directory permissions" >&2
@@ -169,18 +192,23 @@ if [[ -e "$INSTALL_PATH" ]]; then
 fi
 
 if ! ditto "$staged_app" "$INSTALL_PATH"; then
-  rm -rf "$INSTALL_PATH"
-  [[ ! -e "$backup_app" ]] || mv "$backup_app" "$INSTALL_PATH"
-  echo "installation failed; the previous app was restored" >&2
+  restore_previous_app || exit 1
+  echo "installation failed" >&2
   exit 1
 fi
 
 if $INSTALL_HOOKS; then
-  "$INSTALL_PATH/Contents/Resources/scripts/install-hooks" --all
+  if ! "$INSTALL_PATH/Contents/Resources/scripts/install-hooks" --all; then
+    restore_previous_app || exit 1
+    echo "hook installation failed; review the configuration backup before retrying" >&2
+    exit 1
+  fi
 fi
 
 if $OPEN_APP; then
-  open "$INSTALL_PATH"
+  if ! open "$INSTALL_PATH"; then
+    echo "Agent Island was installed, but macOS did not open it automatically." >&2
+  fi
 fi
 
 cat <<EOF

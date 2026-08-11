@@ -102,7 +102,52 @@ class ClaudeHookFixtureReplayTests(unittest.TestCase):
             self.assertNotIn("expired", retained)
             self.assertIn("current", retained)
             self.assertTrue(marker.exists())
+            self.assertEqual(0o600, events.stat().st_mode & 0o777)
             self.assertEqual(0o600, marker.stat().st_mode & 0o777)
+
+    def test_private_append_uses_owner_only_directory_and_file_modes(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="agent-island-private-log-") as directory:
+            path = Path(directory) / "state" / "bridge.log"
+            BRIDGE.append_private_text(path, "first\n")
+            BRIDGE.append_private_text(path, "second\n")
+            self.assertEqual("first\nsecond\n", path.read_text(encoding="utf-8"))
+            self.assertEqual(0o700, path.parent.stat().st_mode & 0o777)
+            self.assertEqual(0o600, path.stat().st_mode & 0o777)
+
+    def test_auto_approval_rejects_sensitive_or_out_of_workspace_reads(self) -> None:
+        safe = {
+            "tool_name": "Read",
+            "cwd": "/work/project",
+            "tool_input": {"file_path": "/work/project/README.md"},
+        }
+        sensitive = {
+            "tool_name": "Read",
+            "cwd": "/work/project",
+            "tool_input": {"file_path": "/work/project/.env"},
+        }
+        outside = {
+            "tool_name": "Grep",
+            "cwd": "/work/project",
+            "tool_input": {"path": "/Users/example/.ssh"},
+        }
+        missing = {"tool_name": "Read", "cwd": "/work/project", "tool_input": {}}
+        relative_escape = {
+            "tool_name": "Grep",
+            "cwd": "/work/project",
+            "tool_input": {"path": "../another-project"},
+        }
+        broad_workspace = {
+            "tool_name": "Glob",
+            "cwd": str(Path.home()),
+            "tool_input": {"path": "."},
+        }
+
+        self.assertEqual("safe_read", BRIDGE.classify_tool_risk(safe)["risk"])
+        for payload in (sensitive, outside, missing, relative_escape, broad_workspace):
+            with self.subTest(payload=payload):
+                risk = BRIDGE.classify_tool_risk(payload)
+                self.assertEqual("manual_sensitive_read", risk["risk"])
+                self.assertFalse(risk["auto_approval_eligible"])
 
 
 if __name__ == "__main__":

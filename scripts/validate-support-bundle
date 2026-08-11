@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Copyright (c) 2026 Ling
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+umask 077
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/agent-island-support-test.XXXXXX")"
+cleanup() { rm -rf "$TMP_ROOT"; }
+trap cleanup EXIT
+
+TEST_HOME="$TMP_ROOT/home"
+DATA_DIR="$TEST_HOME/.agent-island"
+OUTPUT_DIR="$TMP_ROOT/output"
+mkdir -p "$DATA_DIR" "$OUTPUT_DIR"
+
+cat > "$DATA_DIR/transport-health.json" <<'JSON'
+[
+  {
+    "id": "fixture",
+    "name": "Fixture",
+    "state": "degraded",
+    "endpoint": "/Users/private-user/SecretProject/socket",
+    "failure": "Authorization: Bearer support-secret-value api_key=another-secret-value email=person@example.com host=192.168.10.55"
+  }
+]
+JSON
+cat > "$DATA_DIR/events.jsonl" <<'JSONL'
+{"agent":"fixture","status":"working","message":"PRIVATE-CONVERSATION-MARKER"}
+JSONL
+printf '%s\n' 'PRIVATE-LOG-MARKER' > "$DATA_DIR/agent-island.log"
+
+sample='github_pat_1234567890abcdefghijklmnop /Users/private-user/SecretProject person@example.com 192.168.10.55'
+redacted="$(printf '%s' "$sample" | HOME="$TEST_HOME" "$ROOT/scripts/redact-support-text")"
+[[ "$redacted" != *"github_pat_"* ]]
+[[ "$redacted" != *"private-user"* ]]
+[[ "$redacted" != *"person@example.com"* ]]
+[[ "$redacted" != *"192.168.10.55"* ]]
+
+archive="$(HOME="$TEST_HOME" TMPDIR="$TMP_ROOT" "$ROOT/scripts/agent-island-support-bundle" --output "$OUTPUT_DIR")"
+[[ -f "$archive" && -f "$archive.sha256" ]]
+[[ "$(stat -f %Lp "$archive")" == "600" ]]
+[[ "$(stat -f %Lp "$archive.sha256")" == "600" ]]
+
+EXTRACTED="$TMP_ROOT/extracted"
+mkdir -p "$EXTRACTED"
+tar -C "$EXTRACTED" -xzf "$archive"
+
+if grep -R -E 'support-secret-value|another-secret-value|private-user|person@example.com|192\.168\.10\.55|PRIVATE-(CONVERSATION|LOG)-MARKER' "$EXTRACTED" >/dev/null; then
+  printf 'support bundle leaked fixture data\n' >&2
+  exit 1
+fi
+if find "$EXTRACTED" -type f \( -name 'events.jsonl' -o -name 'agent-island.log' \) | grep -q .; then
+  printf 'support bundle included excluded runtime files\n' >&2
+  exit 1
+fi
+grep -R -q '<redacted' "$EXTRACTED"
+
+printf 'Support bundle redaction validation passed.\n'

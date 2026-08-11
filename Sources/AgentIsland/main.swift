@@ -6,20 +6,16 @@ import Combine
 import Foundation
 import SwiftUI
 
+private let islandLogLock = NSLock()
+
 func islandLog(_ message: String) {
+    islandLogLock.lock()
+    defer { islandLogLock.unlock() }
     let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".agent-island")
-    try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let url = root.appendingPathComponent("agent-island.log")
     let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
     if let data = line.data(using: .utf8) {
-        if FileManager.default.fileExists(atPath: url.path),
-           let handle = try? FileHandle(forWritingTo: url) {
-            _ = try? handle.seekToEnd()
-            try? handle.write(contentsOf: data)
-            try? handle.close()
-        } else {
-            try? data.write(to: url)
-        }
+        try? LocalDataSecurity.appendPrivate(data, to: url)
     }
 }
 
@@ -4032,8 +4028,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func copyWebBridgeToken() {
+        guard let pairingToken = webBridgeServer.pairingToken else {
+            islandLog("web bridge pairing token copy failed")
+            return
+        }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(webBridgeServer.pairingToken, forType: .string)
+        NSPasteboard.general.setString(pairingToken, forType: .string)
         islandLog("web bridge pairing token copied")
     }
 
@@ -4068,23 +4068,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func openStatusFolder() {
-        try? FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+        try? LocalDataSecurity.ensurePrivateDirectory(at: dataRoot)
         NSWorkspace.shared.open(dataRoot)
     }
 
     @objc private func openEventsLog() {
-        try? FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
         let url = dataRoot.appendingPathComponent("events.jsonl")
         if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil)
+            try? LocalDataSecurity.writePrivate(Data(), to: url)
         }
         NSWorkspace.shared.open(url)
     }
 
     @objc private func clearStatusEvents() {
-        try? FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
         let url = dataRoot.appendingPathComponent("events.jsonl")
-        try? Data().write(to: url)
+        try? LocalDataSecurity.writePrivate(Data(), to: url)
         monitor.refreshAsync()
         islandLog("status events cleared")
     }

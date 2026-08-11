@@ -197,10 +197,7 @@ enum ClaudeAppFocuser {
     }
 
     private static func appleScriptLiteral(_ value: String) -> String {
-        let escaped = value
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-        return "\"\(escaped)\""
+        AppleScriptEscaping.literal(value)
     }
 
     private static func runAppleScript(_ source: String) -> String {

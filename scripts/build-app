@@ -32,14 +32,37 @@ binary_dir="$(swift build "${build_args[@]}" --show-bin-path)"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS" "$RESOURCES"
 cp "$binary_dir/AgentIsland" "$MACOS/AgentIsland"
+mkdir -p "$RESOURCES/Licenses"
+cp "$ROOT/LICENSE" "$RESOURCES/Licenses/Agent-Island-MIT.txt"
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$RESOURCES/Licenses/THIRD_PARTY_NOTICES.md"
+cp -R "$ROOT/LICENSES/." "$RESOURCES/Licenses/"
 mkdir -p "$RESOURCES/scripts"
-cp -R "$ROOT/scripts/." "$RESOURCES/scripts/"
+runtime_scripts=(
+  agent-island-bridge.py
+  agent-island-diagnostics
+  agent-island-event
+  agent-island-support-bundle
+  agent_island_local_data.py
+  codex-broker-probe
+  install-hooks
+  redact-support-text
+)
+for script in "${runtime_scripts[@]}"; do
+  cp "$ROOT/scripts/$script" "$RESOURCES/scripts/$script"
+done
 if [[ -d "$ROOT/extensions/agent-island-web-bridge" ]]; then
   mkdir -p "$RESOURCES/WebBridgeExtension"
   cp -R "$ROOT/extensions/agent-island-web-bridge/." "$RESOURCES/WebBridgeExtension/"
 fi
-find "$RESOURCES/scripts" -type d -name "__pycache__" -prune -exec rm -rf {} +
-find "$RESOURCES/scripts" -type f -exec chmod +x {} +
+chmod 755 \
+  "$RESOURCES/scripts/agent-island-bridge.py" \
+  "$RESOURCES/scripts/agent-island-diagnostics" \
+  "$RESOURCES/scripts/agent-island-event" \
+  "$RESOURCES/scripts/agent-island-support-bundle" \
+  "$RESOURCES/scripts/codex-broker-probe" \
+  "$RESOURCES/scripts/install-hooks" \
+  "$RESOURCES/scripts/redact-support-text"
+chmod 644 "$RESOURCES/scripts/agent_island_local_data.py"
 
 cat > "$CONTENTS/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

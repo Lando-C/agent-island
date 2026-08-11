@@ -97,8 +97,8 @@ SOFTWARE.
   - `item/tool/requestUserInput` answer payload shape
   - command, file, and permission approval result boundaries
 
-The upstream Apache-2.0 license is available at:
-https://github.com/erha19/ping-island/blob/main/LICENSE
+The Apache-2.0 license text distributed with Agent Island is available at
+[`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
 
 Upstream NOTICE preserved for the adapted portions:
 
@@ -109,7 +109,20 @@ Copyright 2026 Ping Island contributors
 Ping Island is an independent project. It draws inspiration from
 claude-island by Farouq Aldori, but it is not a full fork or a verbatim
 derivative of that project.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this work except in compliance with the License.
+You may obtain a copy of the License in LICENSE.md or at:
+
+    https://www.apache.org/licenses/LICENSE-2.0
+
+The contents of this NOTICE file are for informational purposes only and
+do not modify the terms of the Apache License, Version 2.0.
 ```
+
+Ping Island's NOTICE also covers the Silkscreen font. Agent Island does not
+copy or distribute that font, so the font-specific OFL notice does not pertain
+to this distribution.
 
 ## Vibe Notch
 
@@ -120,10 +133,14 @@ derivative of that project.
   history, terminal visibility, tmux target matching, sound selection, and notch
   geometry. No source file from Vibe Notch is currently copied into Agent Island.
 
+The Apache-2.0 license text for architecture references is retained in
+[`LICENSES/Apache-2.0.txt`](LICENSES/Apache-2.0.txt).
+
 ## Research-only References
 
-The following projects are kept in the local research directory but should not be
-copied into Agent Island mainline unless license compatibility is confirmed:
+The following projects were studied only as clean-room research references.
+Their source snapshots are not committed or distributed with Agent Island and
+must not be copied into mainline unless license compatibility is confirmed:
 
 - BoringNotch, GPL isolated reference.
 - MioIsland, no license file present in the local snapshot.

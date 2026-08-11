@@ -9,13 +9,23 @@ on:
   pull_request:
     branches: ["main"]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build and validate
     runs-on: macos-14
+    timeout-minutes: 30
     steps:
       - name: Check out
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Swift build
         run: swift build
@@ -24,10 +34,25 @@ jobs:
         run: scripts/test-swift --require-xctest
 
       - name: Python syntax
-        run: python3 -m py_compile scripts/agent-island-bridge.py scripts/codex-broker-probe scripts/validate-codex-broker-probe Tests/Python/test_claude_hook_fixture_replay.py
+        run: >-
+          python3 -m py_compile
+          scripts/agent-island-bridge.py
+          scripts/agent_island_local_data.py
+          scripts/codex-broker-probe
+          scripts/redact-support-text
+          scripts/validate-codex-broker-probe
+          Tests/Python/test_claude_hook_fixture_replay.py
+          Tests/Python/test_codex_broker_probe_security.py
+          Tests/Python/test_local_data_security.py
 
       - name: Claude hook fixture replay
         run: python3 Tests/Python/test_claude_hook_fixture_replay.py
+
+      - name: Codex broker security fixtures
+        run: python3 Tests/Python/test_codex_broker_probe_security.py
+
+      - name: Local data security fixtures
+        run: python3 Tests/Python/test_local_data_security.py
 
       - name: Browser bridge extension syntax
         run: |
@@ -37,12 +62,30 @@ jobs:
           node --check extensions/agent-island-web-bridge/options.js
 
       - name: Shell syntax
-        run: bash -n scripts/agent-island-diagnostics scripts/build-app scripts/install scripts/install-hooks scripts/agent-island-event scripts/test-swift
+        run: >-
+          bash -n
+          scripts/agent-island-diagnostics
+          scripts/agent-island-support-bundle
+          scripts/agent-island-event
+          scripts/build-app
+          scripts/install
+          scripts/install-hooks
+          scripts/notarize-app
+          scripts/test-swift
+          scripts/update-homebrew-cask
+          scripts/validate-install-hooks
+          scripts/validate-support-bundle
 
       - name: Installer command surface
         run: |
           scripts/install --help
           scripts/install-hooks --help
+
+      - name: Hook installer safety
+        run: scripts/validate-install-hooks
+
+      - name: Support bundle privacy
+        run: scripts/validate-support-bundle
 
       - name: Reducer validation
         run: scripts/validate-session-reducer
@@ -52,3 +95,14 @@ jobs:
 
       - name: Codex broker probe validation
         run: scripts/validate-codex-broker-probe
+
+      - name: Package app and notices
+        env:
+          AGENT_ISLAND_VERSION: 0.2.0
+          AGENT_ISLAND_BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          scripts/build-app
+          test -f "dist/Agent Island.app/Contents/Resources/Licenses/Agent-Island-MIT.txt"
+          test -f "dist/Agent Island.app/Contents/Resources/Licenses/Apache-2.0.txt"
+          test -f "dist/Agent Island.app/Contents/Resources/Licenses/THIRD_PARTY_NOTICES.md"
+          codesign --verify --deep --strict --verbose=2 "dist/Agent Island.app"

@@ -5,6 +5,8 @@ for public releases while pre-1.0 interfaces remain subject to change.
 
 ## Unreleased
 
+## 0.2.0 - 2026-08-12
+
 ### Security
 
 - Enforce owner-only local state directories/files with no-follow sensitive

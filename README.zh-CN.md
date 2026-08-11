@@ -54,7 +54,7 @@ bash /tmp/agent-island-install
 
 ```bash
 # 安装指定版本
-bash /tmp/agent-island-install --version v0.1.0
+bash /tmp/agent-island-install --version v0.2.0
 
 # 不改 Claude/Codex Hook 配置
 bash /tmp/agent-island-install --no-hooks

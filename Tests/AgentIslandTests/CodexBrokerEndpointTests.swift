@@ -11,9 +11,15 @@ import XCTest
 @testable import AgentIsland
 
 private func withBrokerFixture<T>(_ body: (URL) throws -> T) throws -> T {
-    let root = FileManager.default.temporaryDirectory
-        .appendingPathComponent("agent-island-broker-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    // Keep the fixture below macOS's Unix-domain socket path limit even when
+    // XCTest provides a long hosted-runner temporary directory.
+    let root = URL(fileURLWithPath: "/tmp", isDirectory: true)
+        .appendingPathComponent("ai-broker-\(UUID().uuidString.prefix(8))", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: root,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
     defer { try? FileManager.default.removeItem(at: root) }
     return try body(root)
 }
